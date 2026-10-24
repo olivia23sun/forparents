@@ -41,7 +41,10 @@
 <body>
 <header>
   <h1>📥 批次匯入工具</h1>
-  <a class="back" href="admin.html">← 回後台</a>
+  <div class="header-links">
+    <a class="back" href="index.html">🏠 回首頁</a>
+    <a class="back" href="admin.html">← 回後台</a>
+  </div>
 </header>
 
 <main>
@@ -93,7 +96,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-let currentType = 'restaurant';
+let currentType = null; // 不預設，必須手動選擇
 let parsedRows = [];
 
 window.loginGoogle = async () => {
@@ -132,9 +135,9 @@ function colName(type) {
 
 function buildUI() {
   document.getElementById('main-card').innerHTML = `
-    <h2>選擇匯入類型</h2>
+    <h2>選擇匯入類型 <span id="type-hint" style="font-size:12px;color:var(--red);font-weight:400">（請先選擇）</span></h2>
     <div class="tabs">
-      <button class="tab active" id="tab-r" onclick="setType('restaurant')">🍽 親子餐廳</button>
+      <button class="tab" id="tab-r" onclick="setType('restaurant')">🍽 親子餐廳</button>
       <button class="tab" id="tab-p" onclick="setType('park')">🌳 公園</button>
       <button class="tab" id="tab-a" onclick="setType('attraction')">🎡 親子景點</button>
     </div>
@@ -158,6 +161,8 @@ function buildUI() {
     document.getElementById('tab-r').classList.toggle('active', type === 'restaurant');
     document.getElementById('tab-p').classList.toggle('active', type === 'park');
     document.getElementById('tab-a').classList.toggle('active', type === 'attraction');
+    document.getElementById('type-hint').style.display = 'none';
+    updateImportBtn();
   };
 
   const dropZone = document.getElementById('drop-zone');
@@ -171,6 +176,12 @@ function buildUI() {
   dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
   dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('over'); handleFile(e.dataTransfer.files[0]); });
+}
+
+// 必須「已選類型」且「已讀到資料」才能匯入
+function updateImportBtn() {
+  const btn = document.getElementById('import-btn'); if (!btn) return;
+  btn.disabled = !(currentType && parsedRows.length);
 }
 
 function handleFile(file) {
@@ -235,7 +246,7 @@ function showPreview(rows) {
       </tr>`).join('')}
   `;
   preview.style.display = '';
-  document.getElementById('import-btn').disabled = false;
+  updateImportBtn();
 }
 
 // 依 name 找同一分類下既有的文件（可能有多筆）
@@ -247,6 +258,9 @@ async function findExisting(colRef, name) {
 
 window.doImport = async () => {
   if (!parsedRows.length) return;
+  if (!currentType) { alert('請先選擇匯入類型'); return; }
+  const typeLabel = { restaurant:'親子餐廳', park:'公園', attraction:'親子景點' }[currentType];
+  if (!confirm(`確定將 ${parsedRows.length} 筆資料匯入到「${typeLabel}」？`)) return;
   const btn = document.getElementById('import-btn');
   const log = document.getElementById('log');
   btn.disabled = true;

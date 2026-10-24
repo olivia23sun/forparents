@@ -72,7 +72,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc, setDoc, serverTimestamp }
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc, setDoc, serverTimestamp, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { CITIES } from './location-data.js';
 
@@ -198,6 +198,7 @@ function renderDataSection() {
     </div>
 
     <div class="section-title" id="list-title">${LABELS[currentType]}</div>
+    <div class="bulk-bar" id="bulk-bar"></div>
     <div id="item-list"></div>
     <div class="pagination" id="list-pagination"></div>
   `;
@@ -211,6 +212,7 @@ function renderDataSection() {
     currentType = type;
     sessionStorage.setItem('tpg_admin_type', type);
     selectedTags.clear(); 
+    bulkSelected.clear();
     listPage = 1;
     sessionStorage.setItem('tpg_admin_page', 1);
     
@@ -273,23 +275,78 @@ function formatDate(ts) {
 }
 
 let listPage = parseInt(sessionStorage.getItem('tpg_admin_page')) || 1;
+// 批次刪除：已勾選的 id（跨頁保留，切換分類時清空）
+let bulkSelected = new Set();
+let currentPageIds = [];
+
+function renderBulkBar() {
+  const bar = document.getElementById('bulk-bar'); if (!bar) return;
+  if (!allItems[currentType].length) { bar.innerHTML = ''; return; }
+  const allOnPage = currentPageIds.length > 0 && currentPageIds.every(id => bulkSelected.has(id));
+  bar.innerHTML = `
+    <label><input type="checkbox" class="list-check" ${allOnPage ? 'checked' : ''} onchange="toggleSelectPage(this.checked)" /> 全選本頁</label>
+    <span>已選 ${bulkSelected.size} 筆</span>
+    ${bulkSelected.size ? '<button class="cancel-btn" style="width:auto;margin:0;padding:5px 12px;font-size:13px" onclick="clearBulk()">取消選取</button>' : ''}
+    <button class="bulk-del-btn" ${bulkSelected.size ? '' : 'disabled'} onclick="bulkDelete()">🗑 刪除選取</button>
+  `;
+}
+
+window.toggleSelect = (id, checked) => {
+  checked ? bulkSelected.add(id) : bulkSelected.delete(id);
+  document.querySelector(`.list-item[data-id="${id}"]`)?.classList.toggle('selected', checked);
+  renderBulkBar();
+};
+window.toggleSelectPage = (checked) => {
+  currentPageIds.forEach(id => checked ? bulkSelected.add(id) : bulkSelected.delete(id));
+  renderList();
+};
+window.clearBulk = () => { bulkSelected.clear(); renderList(); };
+
+window.bulkDelete = async () => {
+  const ids = [...bulkSelected];
+  if (!ids.length) return;
+  if (!confirm(`確定刪除選取的 ${ids.length} 筆資料？此動作無法復原。`)) return;
+  const btn = document.querySelector('.bulk-del-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '刪除中...'; }
+  try {
+    // Firestore 單次 batch 上限 500 筆，分批送出
+    for (let i = 0; i < ids.length; i += 450) {
+      const batch = writeBatch(db);
+      ids.slice(i, i + 450).forEach(id => batch.delete(doc(db, COLS[currentType], id)));
+      await batch.commit();
+    }
+    bulkSelected.clear();
+    showToast(`已刪除 ${ids.length} 筆`);
+    await loadAll();
+  } catch (e) {
+    showToast('刪除失敗：' + e.message);
+    renderBulkBar();
+  }
+};
 const LIST_PER_PAGE = 20;
 
 function renderList() {
   const list = document.getElementById('item-list'); if (!list) return;
   const pager = document.getElementById('list-pagination');
   const items = allItems[currentType];
+  // 移除已不存在的勾選
+  const existIds = new Set(items.map(i => i.id));
+  [...bulkSelected].forEach(id => { if (!existIds.has(id)) bulkSelected.delete(id); });
   if (!items.length) {
     list.innerHTML = '<p style="font-size:13px;color:var(--muted)">尚無資料</p>';
     if (pager) pager.innerHTML = '';
+    currentPageIds = []; renderBulkBar();
     return;
   }
   const totalPages = Math.max(1, Math.ceil(items.length / LIST_PER_PAGE));
   if (listPage > totalPages) listPage = totalPages;
   const pageItems = items.slice((listPage - 1) * LIST_PER_PAGE, listPage * LIST_PER_PAGE);
+  currentPageIds = pageItems.map(i => i.id);
 
   list.innerHTML = pageItems.map(item => `
-    <div class="list-item">
+    <div class="list-item ${bulkSelected.has(item.id) ? 'selected' : ''}" data-id="${item.id}">
+      <input type="checkbox" class="list-check" ${bulkSelected.has(item.id) ? 'checked' : ''}
+        onchange="toggleSelect('${item.id}', this.checked)" />
       <div class="list-item-info">
         <div class="list-item-name">${item.name}</div>
         <div class="list-item-meta">${item.address || ''}${item.updatedAt ? ' · 更新 '+formatDate(item.updatedAt) : item.createdAt ? ' · 新增 '+formatDate(item.createdAt) : ''}</div>
@@ -301,6 +358,7 @@ function renderList() {
       </div>
     </div>
   `).join('');
+  renderBulkBar();
 
   if (pager) {
     if (totalPages <= 1) { pager.innerHTML = ''; return; }
@@ -442,6 +500,7 @@ window.submitItem = async () => {
 window.deleteItem = async (id) => {
   if (!confirm('確定刪除？')) return;
   await deleteDoc(doc(db, COLS[currentType], id));
+  bulkSelected.delete(id);
   showToast('已刪除'); await loadAll();
 };
 
