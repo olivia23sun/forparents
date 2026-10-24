@@ -83,6 +83,13 @@
       }
       .detail-info { border-right:none; border-bottom:1px solid var(--border); max-height:40vh; }
     }
+    .aedit-del-btn {
+      margin-top:10px; width:100%; padding:9px; border-radius:12px;
+      border:2px solid var(--red); background:transparent; color:var(--red);
+      font-size:14px; font-weight:700; cursor:pointer; font-family:var(--font);
+    }
+    .aedit-del-btn:hover { background:var(--pink-soft); }
+    .aedit-del-btn:disabled { opacity:.5; cursor:not-allowed; }
   </style>
 </head>
 <body>
@@ -182,6 +189,7 @@
       <button class="cancel-btn" onclick="closeAEditModal()">取消</button>
       <button class="submit-btn" id="am-submit-btn" onclick="saveAEditModal()">儲存</button>
     </div>
+    <button class="aedit-del-btn" id="am-del-btn" onclick="deleteAEditItem()">🗑 刪除此地點</button>
   </div>
 </div>
 
@@ -796,6 +804,31 @@ window.saveAEditModal = async () => {
     showToast('儲存失敗：' + e.message);
   } finally {
     btn.disabled = false; btn.textContent = '儲存';
+  }
+};
+
+window.deleteAEditItem = async () => {
+  if (!isAdmin) { showToast('權限不足'); return; }
+  if (!aEditId || !aEditType) return;
+  const item = allData[aEditType]?.find(i => i.id === aEditId);
+  if (!confirm(`確定刪除「${item?.name || '此地點'}」？此動作無法復原，留言也會一併刪除。`)) return;
+
+  const btn = document.getElementById('am-del-btn');
+  btn.disabled = true; btn.textContent = '刪除中...';
+  const delId = aEditId, delType = aEditType;
+  try {
+    // Firestore 不會自動刪子集合，先清掉留言
+    const cSnap = await getDocs(collection(db, COLS[delType], delId, 'comments'));
+    await Promise.all(cSnap.docs.map(d => deleteDoc(d.ref)));
+    await deleteDoc(doc(db, COLS[delType], delId));
+    showToast('已刪除');
+    window.closeAEditModal();
+    if (detailItem?.id === delId) window.closeDetail();
+    await loadData();
+  } catch (e) {
+    showToast('刪除失敗：' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '🗑 刪除此地點';
   }
 };
 
