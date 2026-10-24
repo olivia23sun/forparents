@@ -15,6 +15,74 @@
     /* .aedit-card 外觀定義在 style.css */
     .aedit-close-row { display:flex; gap:8px; margin-top:1rem; }
     .aedit-close-row .submit-btn, .aedit-close-row .cancel-btn { flex:1; margin-top:0; }
+    /* ── 卡片詳細彈窗（左資訊／右留言）── */
+    .card { cursor:pointer; }
+    .detail-overlay {
+      display:none; position:fixed; inset:0; background:rgba(61,48,39,.35);
+      z-index:900; align-items:center; justify-content:center; padding:1rem;
+    }
+    .detail-overlay.show { display:flex; }
+    .detail-card {
+      position:relative; background:var(--card); border-radius:16px;
+      width:100%; max-width:860px; height:min(80vh, 600px);
+      display:grid; grid-template-columns:1fr 1.2fr; overflow:hidden;
+      box-shadow:0 10px 40px rgba(0,0,0,.25); animation:dt-pop .18s ease-out;
+    }
+    @keyframes dt-pop { from { transform:scale(.96); opacity:0; } to { transform:scale(1); opacity:1; } }
+    .detail-close {
+      position:absolute; top:10px; right:12px; z-index:2; width:32px; height:32px;
+      border-radius:50%; border:1px solid var(--border); background:var(--card);
+      font-size:16px; cursor:pointer; color:var(--muted);
+    }
+    .detail-close:hover { background:var(--tag); }
+    .detail-info {
+      padding:1.5rem; border-right:1px solid var(--border); overflow-y:auto;
+      display:flex; flex-direction:column; gap:8px;
+    }
+    .detail-info .card-icon { width:52px; height:52px; font-size:26px; border-radius:14px; }
+    .detail-top { display:flex; align-items:center; justify-content:space-between; padding-right:36px; }
+    .detail-name { font-size:20px; font-weight:600; line-height:1.4; word-break:break-word; margin-top:6px; }
+    .detail-addr { font-size:13px; color:var(--muted); }
+    .detail-date { font-size:11px; color:var(--muted); }
+    .detail-go {
+      margin-top:auto; display:block; text-align:center; padding:10px; border-radius:10px;
+      background:var(--accent); color:#FDF8F0; text-decoration:none; font-weight:600; font-size:14px;
+    }
+    .detail-go:hover { opacity:.9; }
+    .detail-comments { display:flex; flex-direction:column; min-height:0; }
+    .cm-header { padding:1.25rem 1.25rem .75rem; font-weight:600; font-size:15px; border-bottom:1px solid var(--border); }
+    .cm-list { flex:1; overflow-y:auto; padding:.75rem 1.25rem; display:flex; flex-direction:column; gap:14px; }
+    .cm-item { display:flex; gap:10px; }
+    .cm-avatar { width:30px; height:30px; border-radius:50%; flex-shrink:0; background:var(--tag); object-fit:cover; }
+    .cm-body { flex:1; min-width:0; }
+    .cm-meta { display:flex; align-items:center; gap:6px; font-size:12px; }
+    .cm-name { font-weight:600; }
+    .cm-date { color:var(--muted); font-size:11px; }
+    .cm-del { margin-left:auto; background:none; border:none; color:var(--muted); font-size:11px; cursor:pointer; }
+    .cm-del:hover { color:#c0392b; }
+    .cm-text { font-size:13px; line-height:1.6; margin-top:2px; white-space:pre-wrap; word-break:break-word; }
+    .cm-empty { text-align:center; color:var(--muted); font-size:13px; padding:2rem 0; }
+    .cm-form { border-top:1px solid var(--border); padding:.75rem 1.25rem 1rem; }
+    .cm-form textarea { min-height:64px; resize:none; }
+    .cm-form-row { display:flex; justify-content:space-between; align-items:center; margin-top:6px; }
+    .cm-count { font-size:11px; color:var(--muted); }
+    .cm-submit {
+      padding:7px 18px; border-radius:20px; border:none; background:var(--accent);
+      color:#FDF8F0; font-size:13px; font-weight:600; cursor:pointer;
+    }
+    .cm-submit:disabled { opacity:.5; cursor:not-allowed; }
+    .cm-login { text-align:center; font-size:13px; color:var(--muted); }
+    .cm-login .auth-btn { display:inline-flex; margin-top:6px; }
+
+    /* 手機：改上下排列、從底部滑出 */
+    @media (max-width:680px) {
+      .detail-overlay { align-items:flex-end; padding:0; }
+      .detail-card {
+        grid-template-columns:1fr; grid-template-rows:auto 1fr;
+        height:90vh; border-radius:16px 16px 0 0;
+      }
+      .detail-info { border-right:none; border-bottom:1px solid var(--border); max-height:40vh; }
+    }
   </style>
 </head>
 <body>
@@ -71,6 +139,19 @@
   </div>
 </div>
 
+<!-- 卡片詳細彈窗 -->
+<div class="detail-overlay" id="detail-overlay">
+  <div class="detail-card">
+    <button class="detail-close" onclick="closeDetail()" title="關閉">✕</button>
+    <div class="detail-info" id="dt-info"></div>
+    <div class="detail-comments">
+      <div class="cm-header" id="dt-cm-header">💬 留言</div>
+      <div class="cm-list" id="dt-comment-list"></div>
+      <div class="cm-form" id="dt-comment-form"></div>
+    </div>
+  </div>
+</div>
+
 <div class="aedit-overlay" id="aedit-overlay">
   <div class="aedit-card">
     <h3 id="am-title">編輯資料</h3>
@@ -111,7 +192,8 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, addDoc, updateDoc, serverTimestamp }
+import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, addDoc, updateDoc, serverTimestamp,
+         query, orderBy, limit }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { CITIES } from './location-data.js';
 
@@ -149,6 +231,16 @@ const TAG_COLS = { restaurant:'tags_restaurant', park:'tags_park', attraction:'t
 let aEditId = null;
 let aEditType = null;
 let aEditSelectedTags = new Set();
+
+// ── 詳細彈窗／留言 狀態 ──
+let detailItem = null;
+let detailComments = [];
+const CM_MAX_LEN = 300;
+const CM_COOLDOWN_MS = 30 * 1000; // 同一裝置 30 秒內只能留一次
+
+// 防 XSS：所有使用者輸入的內容輸出前都要跳脫
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 
 // ── 縣市選單 ──
 const citySelect = document.getElementById('city-select');
@@ -209,8 +301,8 @@ onAuthStateChanged(auth, async user => {
   if (user) {
     isAdmin = (user.uid === ADMIN_UID);
     area.innerHTML = `<div class="user-info">
-      <img class="avatar" src="${user.photoURL}" />
-      <span class="user-name">${user.displayName}</span>
+      <img class="avatar" src="${esc(user.photoURL)}" />
+      <span class="user-name">${esc(user.displayName)}</span>
       ${isAdmin ? `<a class="auth-btn" href="admin.html">🛠 後台</a>
       <a class="auth-btn" href="import.html">📥 匯入 CSV</a>` : ''}
       <button class="auth-btn logout" onclick="doLogout()">登出</button>
@@ -227,6 +319,8 @@ onAuthStateChanged(auth, async user => {
     if (currentTab === 'favorites') switchTab('all');
   }
   render(false);
+  // 彈窗開著時登入／登出，同步更新留言區
+  if (detailItem) { renderDetailInfo(); renderCommentForm(); renderComments(); }
 });
 
 // ── Data ──
@@ -267,6 +361,7 @@ async function toggleFavorite(itemId) {
     userFavorites.add(itemId); showToast('已加入收藏 ❤️');
   }
   render(false);
+  if (detailItem) renderDetailInfo();
 }
 window.toggleFavorite = toggleFavorite;
 
@@ -329,6 +424,12 @@ function formatDate(ts) {
   return d.toLocaleDateString('zh-TW', { month:'2-digit', day:'2-digit' });
 }
 
+function formatDateTime(ts) {
+  if (!ts) return '剛剛';
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return d.toLocaleString('zh-TW', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false });
+}
+
 // 依目前畫面實際欄數計算每頁筆數（四排）
 function getColumnCount() {
   const grid = document.getElementById('cards');
@@ -377,24 +478,24 @@ function render(resetPage = true) {
       ? '更新 ' + formatDate(item.updatedAt)
       : item.createdAt ? '建立 ' + formatDate(item.createdAt) : '';
     return `
-    <div class="card">
+    <div class="card" onclick="openDetail('${item.type}','${item.id}')">
       <div class="card-body">
         <div class="card-top-row">
           <div class="card-icon card-icon-${item.type}">${TYPE_ICON[item.type] || '📍'}</div>
           <div class="card-top-actions">
-            ${isAdmin ? `<button class="admin-edit-btn" onclick="startAEdit('${item.type}','${item.id}')" title="編輯">✏️</button>` : ''}
+            ${isAdmin ? `<button class="admin-edit-btn" onclick="event.stopPropagation();startAEdit('${item.type}','${item.id}')" title="編輯">✏️</button>` : ''}
             <button class="fav-btn ${userFavorites.has(item.id) ? 'active' : ''}"
-              onclick="toggleFavorite('${item.id}')">${userFavorites.has(item.id) ? '❤️' : '🤍'}</button>
+              onclick="event.stopPropagation();toggleFavorite('${item.id}')">${userFavorites.has(item.id) ? '❤️' : '🤍'}</button>
           </div>
         </div>
         <div class="card-name-row">
-          <div class="card-name">${item.name}</div>
+          <div class="card-name">${esc(item.name)}</div>
           ${showBadge ? `<span class="card-type-badge">${TYPE_LABEL[item.type]||''}</span>` : ''}
         </div>
-        <div class="card-addr">📍 ${item.address || ''}</div>
-        <div class="card-tags">${(item.tags||[]).map(t=>`<span class="card-tag">${t}</span>`).join('')}</div>
+        <div class="card-addr">📍 ${esc(item.address)}</div>
+        <div class="card-tags">${(item.tags||[]).map(t=>`<span class="card-tag">${esc(t)}</span>`).join('')}</div>
         <div class="card-footer">
-          ${item.mapsUrl ? `<a class="card-go" href="${item.mapsUrl}" target="_blank" rel="noopener">🗺 我要去這邊玩！</a>` : ''}
+          ${item.mapsUrl ? `<a class="card-go" href="${esc(item.mapsUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">🗺 我要去這邊玩！</a>` : ''}
           ${dateLabel ? `<div class="card-date">${dateLabel}</div>` : ''}
         </div>
       </div>
@@ -425,6 +526,172 @@ let resizeTimer;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => render(false), 200);
+});
+
+// ── 詳細彈窗 + 留言 ──────────────────────────────
+window.openDetail = async (type, id) => {
+  const item = allData[type]?.find(i => i.id === id);
+  if (!item) return;
+  detailItem = item;
+  detailComments = [];
+  renderDetailInfo();
+  renderCommentForm();
+  document.getElementById('detail-overlay').classList.add('show');
+  document.body.style.overflow = 'hidden';
+  await loadComments();
+};
+
+window.closeDetail = () => {
+  detailItem = null;
+  detailComments = [];
+  document.getElementById('detail-overlay').classList.remove('show');
+  document.body.style.overflow = '';
+};
+
+function renderDetailInfo() {
+  const item = detailItem; if (!item) return;
+  const fav = userFavorites.has(item.id);
+  const dateLabel = item.updatedAt
+    ? '更新於 ' + formatDateTime(item.updatedAt)
+    : item.createdAt ? '建立於 ' + formatDateTime(item.createdAt) : '';
+  document.getElementById('dt-info').innerHTML = `
+    <div class="detail-top">
+      <div class="card-icon card-icon-${item.type}">${TYPE_ICON[item.type] || '📍'}</div>
+      <div class="card-top-actions">
+        ${isAdmin ? `<button class="admin-edit-btn" onclick="startAEdit('${item.type}','${item.id}')" title="編輯">✏️</button>` : ''}
+        <button class="fav-btn ${fav ? 'active' : ''}" style="font-size:20px"
+          onclick="toggleFavorite('${item.id}')">${fav ? '❤️' : '🤍'}</button>
+      </div>
+    </div>
+    <div class="card-name-row">
+      <div class="detail-name">${esc(item.name)}</div>
+      <span class="card-type-badge">${TYPE_LABEL[item.type] || ''}</span>
+    </div>
+    <div class="detail-addr">📍 ${esc(item.address) || '（未填地址）'}</div>
+    <div class="card-tags">${(item.tags||[]).map(t => `<span class="card-tag">${esc(t)}</span>`).join('')}</div>
+    ${dateLabel ? `<div class="detail-date">${dateLabel}</div>` : ''}
+    ${item.mapsUrl ? `<a class="detail-go" href="${esc(item.mapsUrl)}" target="_blank" rel="noopener">🗺 我要去這邊玩！</a>` : ''}
+  `;
+}
+
+async function loadComments() {
+  const item = detailItem; if (!item) return;
+  const list = document.getElementById('dt-comment-list');
+  list.innerHTML = '<div class="cm-empty">載入中...</div>';
+  try {
+    const q = query(
+      collection(db, COLS[item.type], item.id, 'comments'),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+    const snap = await getDocs(q);
+    if (detailItem?.id !== item.id) return; // 讀取期間已切換到別張卡片
+    detailComments = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+    renderComments();
+  } catch (e) {
+    if (detailItem?.id === item.id) list.innerHTML = '<div class="cm-empty">留言載入失敗</div>';
+  }
+}
+
+function renderComments() {
+  const list = document.getElementById('dt-comment-list');
+  document.getElementById('dt-cm-header').textContent = `💬 留言（${detailComments.length}）`;
+  if (!detailComments.length) {
+    list.innerHTML = '<div class="cm-empty">還沒有人留言，來當第一個吧！</div>';
+    return;
+  }
+  list.innerHTML = detailComments.map(c => {
+    const canDel = currentUser && (currentUser.uid === c.uid || isAdmin);
+    const avatar = c.photoURL
+      ? `<img class="cm-avatar" src="${esc(c.photoURL)}" referrerpolicy="no-referrer" />`
+      : `<div class="cm-avatar"></div>`;
+    return `
+    <div class="cm-item">
+      ${avatar}
+      <div class="cm-body">
+        <div class="cm-meta">
+          <span class="cm-name">${esc(c.userName || '使用者')}</span>
+          <span class="cm-date">${formatDateTime(c.createdAt)}</span>
+          ${canDel ? `<button class="cm-del" onclick="deleteComment('${c.id}')">刪除</button>` : ''}
+        </div>
+        <div class="cm-text">${esc(c.text)}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderCommentForm() {
+  const form = document.getElementById('dt-comment-form');
+  if (!currentUser) {
+    form.innerHTML = `<div class="cm-login">登入後即可留言
+      <br><button class="auth-btn" onclick="loginGoogle()">
+        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="16" /> Google 登入
+      </button></div>`;
+    return;
+  }
+  form.innerHTML = `
+    <textarea id="cm-input" maxlength="${CM_MAX_LEN}" placeholder="分享你帶孩子去的心得…"></textarea>
+    <div class="cm-form-row">
+      <span class="cm-count" id="cm-count">0 / ${CM_MAX_LEN}</span>
+      <button class="cm-submit" id="cm-submit" onclick="submitComment()">送出</button>
+    </div>`;
+  const input = document.getElementById('cm-input');
+  input.addEventListener('input', () => {
+    document.getElementById('cm-count').textContent = `${input.value.length} / ${CM_MAX_LEN}`;
+  });
+}
+
+window.submitComment = async () => {
+  if (!currentUser || !detailItem) return;
+  const input = document.getElementById('cm-input');
+  const text = input.value.trim();
+  if (!text) { showToast('請輸入留言內容'); return; }
+  if (text.length > CM_MAX_LEN) { showToast(`留言最多 ${CM_MAX_LEN} 字`); return; }
+
+  const last = parseInt(localStorage.getItem('cm_last_sent') || '0');
+  const remain = CM_COOLDOWN_MS - (Date.now() - last);
+  if (remain > 0) { showToast(`請 ${Math.ceil(remain / 1000)} 秒後再留言`); return; }
+
+  const btn = document.getElementById('cm-submit');
+  btn.disabled = true; btn.textContent = '送出中...';
+  try {
+    await addDoc(collection(db, COLS[detailItem.type], detailItem.id, 'comments'), {
+      uid: currentUser.uid,
+      userName: currentUser.displayName || '使用者',
+      photoURL: currentUser.photoURL || '',
+      text,
+      createdAt: serverTimestamp(),
+    });
+    localStorage.setItem('cm_last_sent', Date.now().toString());
+    input.value = '';
+    document.getElementById('cm-count').textContent = `0 / ${CM_MAX_LEN}`;
+    showToast('留言成功 ✅');
+    await loadComments();
+  } catch (e) {
+    showToast('留言失敗：' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '送出';
+  }
+};
+
+window.deleteComment = async (cid) => {
+  if (!detailItem || !confirm('確定刪除這則留言？')) return;
+  try {
+    await deleteDoc(doc(db, COLS[detailItem.type], detailItem.id, 'comments', cid));
+    showToast('已刪除留言');
+    await loadComments();
+  } catch (e) {
+    showToast('刪除失敗：' + e.message);
+  }
+};
+
+document.getElementById('detail-overlay').addEventListener('click', e => {
+  if (e.target === e.currentTarget) window.closeDetail();
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (document.getElementById('aedit-overlay').classList.contains('show')) window.closeAEditModal();
+  else if (detailItem) window.closeDetail();
 });
 
 // ── 卡片編輯彈窗（僅管理員；真正權限仍需 Firestore Rules 把關）──
@@ -515,10 +782,16 @@ window.saveAEditModal = async () => {
   };
 
   try {
+    const editedId = aEditId, editedType = aEditType;
     await updateDoc(doc(db, COLS[aEditType], aEditId), data);
     showToast('已儲存 ✅');
     window.closeAEditModal();
     await loadData();
+    // 若詳細彈窗開著的是同一筆，刷新左側資訊
+    if (detailItem?.id === editedId) {
+      detailItem = allData[editedType].find(i => i.id === editedId) || detailItem;
+      renderDetailInfo();
+    }
   } catch (e) {
     showToast('儲存失敗：' + e.message);
   } finally {
