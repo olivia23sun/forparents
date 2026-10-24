@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>親子好去處</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .aedit-overlay {
+      display:none; position:fixed; inset:0; background:rgba(0,0,0,.45);
+      z-index:1000; align-items:flex-start; justify-content:center;
+      overflow-y:auto; padding:5vh 1rem;
+    }
+    .aedit-overlay.show { display:flex; }
+    .aedit-card {
+      background:var(--card); border-radius:14px; padding:1.5rem;
+      width:100%; max-width:480px; box-shadow:0 10px 40px rgba(0,0,0,.25);
+    }
+    .aedit-card h3 { font-size:15px; font-weight:600; margin-bottom:1rem; }
+    .aedit-close-row { display:flex; gap:8px; margin-top:1rem; }
+    .aedit-close-row .submit-btn, .aedit-close-row .cancel-btn { flex:1; margin-top:0; }
+  </style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>🌿 親子好去處</h1>
+    <p>找適合帶孩子的餐廳、公園與景點</p>
+  </div>
+  <div id="auth-area">
+    <button class="auth-btn" onclick="loginGoogle()">
+      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="16" /> Google 登入
+    </button>
+  </div>
+</header>
+
+<main>
+  <div class="tabs">
+    <button class="tab active" data-tab="all">🗺 全部</button>
+    <button class="tab" data-tab="restaurant">🍽 親子餐廳</button>
+    <button class="tab" data-tab="park">🌳 公園</button>
+    <button class="tab" data-tab="attraction">🎡 親子景點</button>
+    <button class="tab" data-tab="favorites" id="fav-tab" style="display:none">❤️ 我的收藏</button>
+  </div>
+
+  <div class="location-bar" id="location-bar">
+    <select id="city-select"><option value="">所有縣市</option></select>
+    <select id="district-select" style="display:none"><option value="">所有區</option></select>
+  </div>
+
+  <div class="filter-label" id="filter-label">篩選條件（可多選）</div>
+  <div class="tag-list" id="tag-list"></div>
+  <hr class="divider" />
+  <div class="result-count" id="result-count"></div>
+  <div class="grid" id="cards"></div>
+  <div class="pagination" id="pagination"></div>
+</main>
+
+<div class="modal-overlay hidden" id="fb-modal">
+  <div class="modal">
+    <h3>💬 意見回饋</h3>
+    <label>類型</label>
+    <select id="fb-type">
+      <option value="建議">建議</option>
+      <option value="錯誤回報">錯誤回報</option>
+      <option value="新增地點">希望新增地點</option>
+      <option value="其他">其他</option>
+    </select>
+    <label>內容</label>
+    <textarea id="fb-content" placeholder="請描述你的意見..."></textarea>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeFeedback()">取消</button>
+      <button class="btn-primary" id="fb-submit" onclick="submitFeedback()">送出</button>
+    </div>
+  </div>
+</div>
+
+<div class="aedit-overlay" id="aedit-overlay">
+  <div class="aedit-card">
+    <h3 id="am-title">編輯資料</h3>
+
+    <label>名稱</label>
+    <input type="text" id="am-name" placeholder="名稱" />
+
+    <label>地址</label>
+    <div class="addr-row">
+      <select id="am-city" onchange="onAModalCityChange()"></select>
+      <select id="am-district"><option value="">選擇區</option></select>
+    </div>
+
+    <label>圖片 URL（選填）</label>
+    <input type="text" id="am-image" placeholder="https://..." />
+
+    <label>Google Maps 導航連結（選填）</label>
+    <input type="text" id="am-maps" placeholder="https://maps.app.goo.gl/..." />
+
+    <label>標籤</label>
+    <div class="tag-grid" id="am-tag-grid"></div>
+    <div class="add-tag-row">
+      <input type="text" id="am-new-tag-input" placeholder="輸入新標籤" />
+      <button class="add-tag-btn" onclick="addNewTagAModal()">+ 新增</button>
+    </div>
+
+    <div class="aedit-close-row">
+      <button class="cancel-btn" onclick="closeAEditModal()">取消</button>
+      <button class="submit-btn" id="am-submit-btn" onclick="saveAEditModal()">儲存</button>
+    </div>
+  </div>
+</div>
+
+<button class="feedback-fab" onclick="openFeedback()">💬 意見回饋</button>
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, addDoc, updateDoc, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { CITIES } from './location-data.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDgTkS5Dl5rVUFrBEOfzHI8TbTIBpD5Qpk",
+  authDomain: "tainan-parent-guide.firebaseapp.com",
+  projectId: "tainan-parent-guide",
+  storageBucket: "tainan-parent-guide.firebasestorage.app",
+  messagingSenderId: "275390459577",
+  appId: "1:275390459577:web:f9479978551f246a373568",
+  measurementId: "G-QJKX09DMRM"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+let currentTab = sessionStorage.getItem('tpg_tab') || 'all';
+let currentPage = parseInt(sessionStorage.getItem('tpg_page')) || 1;
+let isFirstRender = true;
+
+let activeFilters = { all:new Set(), restaurant:new Set(), park:new Set(), attraction:new Set() };
+let selectedCity = '', selectedDistrict = '';
+let allData = { restaurant:[], park:[], attraction:[] };
+let allTags = { all:[], restaurant:[], park:[], attraction:[] };
+let currentUser = null;
+let isAdmin = false;
+let userFavorites = new Set();
+const ADMIN_UID = 'HAvOodPyFRQKo2Ip6ErhTkBe98G2';
+
+// ── 卡片編輯彈窗（僅管理員）狀態 ──
+const COLS = { restaurant:'restaurants', park:'parks', attraction:'attractions' };
+const TAG_COLS = { restaurant:'tags_restaurant', park:'tags_park', attraction:'tags_attraction' };
+let aEditId = null;
+let aEditType = null;
+let aEditSelectedTags = new Set();
+
+// ── 縣市選單 ──
+const citySelect = document.getElementById('city-select');
+const districtSelect = document.getElementById('district-select');
+Object.keys(CITIES).forEach(c => citySelect.innerHTML += `<option>${c}</option>`);
+
+citySelect.addEventListener('change', () => {
+  selectedCity = citySelect.value;
+  selectedDistrict = '';
+  districtSelect.innerHTML = '<option value="">所有區</option>';
+  if (selectedCity && CITIES[selectedCity]) {
+    CITIES[selectedCity].forEach(d => districtSelect.innerHTML += `<option>${d}</option>`);
+    districtSelect.style.display = '';
+  } else {
+    districtSelect.style.display = 'none';
+  }
+  render();
+});
+districtSelect.addEventListener('change', () => { selectedDistrict = districtSelect.value; render(); });
+
+function cityOptions() {
+  return '<option value="">選擇縣市</option>' + Object.keys(CITIES).map(c => `<option>${c}</option>`).join('');
+}
+function districtOptions(city) {
+  if (!city || !CITIES[city]) return '<option value="">選擇區</option>';
+  return '<option value="">選擇區</option>' + CITIES[city].map(d => `<option>${d}</option>`).join('');
+}
+
+// ── Auth ──
+window.loginGoogle = async () => { await signInWithPopup(auth, new GoogleAuthProvider()); };
+window.doLogout = async () => { await signOut(auth); userFavorites.clear(); render(); };
+
+onAuthStateChanged(auth, async user => {
+  currentUser = user;
+  const area = document.getElementById('auth-area');
+  const favTab = document.getElementById('fav-tab');
+  if (user) {
+    isAdmin = (user.uid === ADMIN_UID);
+    area.innerHTML = `<div class="user-info">
+      <img class="avatar" src="${user.photoURL}" />
+      <span class="user-name">${user.displayName}</span>
+      <button class="auth-btn logout" onclick="doLogout()">登出</button>
+    </div>`;
+    favTab.style.display = '';
+    await loadFavorites();
+  } else {
+    area.innerHTML = `<button class="auth-btn" onclick="loginGoogle()">
+      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="16" /> Google 登入
+    </button>`;
+    isAdmin = false;
+    favTab.style.display = 'none';
+    userFavorites.clear();
+    if (currentTab === 'favorites') switchTab('all');
+  }
+  render(false);
+});
+
+// ── Data ──
+async function loadData() {
+  const [rSnap, pSnap, aSnap, rtSnap, ptSnap, atSnap] = await Promise.all([
+    getDocs(collection(db, 'restaurants')),
+    getDocs(collection(db, 'parks')),
+    getDocs(collection(db, 'attractions')),
+    getDocs(collection(db, 'tags_restaurant')),
+    getDocs(collection(db, 'tags_park')),
+    getDocs(collection(db, 'tags_attraction')),
+  ]);
+  allData.restaurant = rSnap.docs.map(d => ({ id:d.id, type:'restaurant', ...d.data() }));
+  allData.park       = pSnap.docs.map(d => ({ id:d.id, type:'park',       ...d.data() }));
+  allData.attraction = aSnap.docs.map(d => ({ id:d.id, type:'attraction', ...d.data() }));
+  allTags.restaurant = rtSnap.docs.map(d => d.data().name).sort();
+  allTags.park       = ptSnap.docs.map(d => d.data().name).sort();
+  allTags.attraction = atSnap.docs.map(d => d.data().name).sort();
+  
+  allTags.all = [...new Set([...allTags.restaurant, ...allTags.park, ...allTags.attraction])].sort();
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === currentTab));
+  renderTags(); render();
+}
+
+async function loadFavorites() {
+  if (!currentUser) return;
+  const snap = await getDocs(collection(db, 'users', currentUser.uid, 'favorites'));
+  userFavorites = new Set(snap.docs.map(d => d.id));
+}
+
+async function toggleFavorite(itemId) {
+  if (!currentUser) { showToast('請先登入才能收藏 🔒'); return; }
+  if (userFavorites.has(itemId)) {
+    await deleteDoc(doc(db, 'users', currentUser.uid, 'favorites', itemId));
+    userFavorites.delete(itemId); showToast('已移除收藏');
+  } else {
+    await setDoc(doc(db, 'users', currentUser.uid, 'favorites', itemId), { savedAt: Date.now() });
+    userFavorites.add(itemId); showToast('已加入收藏 ❤️');
+  }
+  render(false);
+}
+window.toggleFavorite = toggleFavorite;
+
+// ── Tabs ──
+function switchTab(tab) {
+  currentTab = tab;
+  sessionStorage.setItem('tpg_tab', tab);
+  currentPage = 1;
+  sessionStorage.setItem('tpg_page', 1);
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  renderTags(); render(false);
+}
+window.switchTab = switchTab;
+document.querySelectorAll('.tab').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
+
+// ── Tags ──
+function renderTags() {
+  const label = document.getElementById('filter-label');
+  const container = document.getElementById('tag-list');
+  const locBar = document.getElementById('location-bar');
+  if (currentTab === 'favorites') {
+    label.style.display = 'none'; locBar.style.display = 'none'; container.innerHTML = ''; return;
+  }
+  label.style.display = ''; locBar.style.display = '';
+  container.innerHTML = '';
+  (allTags[currentTab] || []).forEach(f => {
+    const el = document.createElement('span');
+    el.className = 'tag' + (activeFilters[currentTab].has(f) ? ' active' : '');
+    el.textContent = f;
+    el.addEventListener('click', () => {
+      activeFilters[currentTab].has(f) ? activeFilters[currentTab].delete(f) : activeFilters[currentTab].add(f);
+      el.classList.toggle('active'); render();
+    });
+    container.appendChild(el);
+  });
+}
+
+// ── Render ──
+const TYPE_LABEL = { restaurant:'餐廳', park:'公園', attraction:'景點' };
+const TYPE_ICON = { restaurant:'🍽', park:'🌳', attraction:'🎡' };
+
+function filterItems(items) {
+  return items
+    .filter(i => !selectedCity || (i.address||'').includes(selectedCity))
+    .filter(i => !selectedDistrict || (i.address||'').includes(selectedDistrict));
+}
+
+function applyTags(items, tab) {
+  const sel = activeFilters[tab];
+  return sel.size === 0 ? items : items.filter(i => [...sel].every(t => (i.tags||[]).includes(t)));
+}
+
+function formatDate(ts) {
+  if (!ts) return '';
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return d.toLocaleDateString('zh-TW', { month:'2-digit', day:'2-digit' });
+}
+
+// 依目前畫面實際欄數計算每頁筆數（四排）
+function getColumnCount() {
+  const grid = document.getElementById('cards');
+  const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length;
+  return cols || 1;
+}
+
+function render(resetPage = true) {
+  if (resetPage) {
+    if (isFirstRender) {
+      isFirstRender = false;
+    } else {
+      currentPage = 1;
+      sessionStorage.setItem('tpg_page', 1);
+    }
+  } else {
+    isFirstRender = false;
+  }
+  
+  let items = [];
+  if (currentTab === 'favorites') {
+    items = [...allData.restaurant, ...allData.park, ...allData.attraction].filter(i => userFavorites.has(i.id));
+  } else if (currentTab === 'all') {
+    items = applyTags(filterItems([...allData.restaurant, ...allData.park, ...allData.attraction]), 'all');
+  } else {
+    items = applyTags(filterItems(allData[currentTab]), currentTab);
+  }
+  document.getElementById('result-count').textContent = `共 ${items.length} 個結果`;
+  const container = document.getElementById('cards');
+  const pager = document.getElementById('pagination');
+  if (!items.length) {
+    container.innerHTML = `<div class="empty"><div class="empty-icon">🔍</div>${
+      currentTab === 'favorites' ? '還沒有收藏，去逛逛吧！' : '沒有符合條件的結果'
+    }</div>`;
+    pager.innerHTML = '';
+    return;
+  }
+  const perPage = getColumnCount() * 4;
+  const totalPages = Math.max(1, Math.ceil(items.length / perPage));
+  if (currentPage > totalPages) currentPage = totalPages;
+  const pageItems = items.slice((currentPage - 1) * perPage, currentPage * perPage);
+
+  const showBadge = currentTab === 'all' || currentTab === 'favorites';
+  container.innerHTML = pageItems.map(item => {
+    const dateLabel = item.updatedAt
+      ? '更新 ' + formatDate(item.updatedAt)
+      : item.createdAt ? '建立 ' + formatDate(item.createdAt) : '';
+    return `
+    <div class="card">
+      <div class="card-body">
+        <div class="card-top-row">
+          <div class="card-icon card-icon-${item.type}">${TYPE_ICON[item.type] || '📍'}</div>
+          <div class="card-top-actions">
+            ${isAdmin ? `<button class="admin-edit-btn" onclick="startAEdit('${item.type}','${item.id}')" title="編輯">✏️</button>` : ''}
+            <button class="fav-btn ${userFavorites.has(item.id) ? 'active' : ''}"
+              onclick="toggleFavorite('${item.id}')">${userFavorites.has(item.id) ? '❤️' : '🤍'}</button>
+          </div>
+        </div>
+        <div class="card-name-row">
+          <div class="card-name">${item.name}</div>
+          ${showBadge ? `<span class="card-type-badge">${TYPE_LABEL[item.type]||''}</span>` : ''}
+        </div>
+        <div class="card-addr">📍 ${item.address || ''}</div>
+        <div class="card-tags">${(item.tags||[]).map(t=>`<span class="card-tag">${t}</span>`).join('')}</div>
+        <div class="card-footer">
+          ${item.mapsUrl ? `<a class="card-go" href="${item.mapsUrl}" target="_blank" rel="noopener">🗺 我要去這邊玩！</a>` : ''}
+          ${dateLabel ? `<div class="card-date">${dateLabel}</div>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  renderPagination(totalPages);
+}
+
+function renderPagination(totalPages) {
+  const pager = document.getElementById('pagination');
+  if (totalPages <= 1) { pager.innerHTML = ''; return; }
+  pager.innerHTML = `
+    <button class="page-btn" ${currentPage <= 1 ? 'disabled' : ''} onclick="goPage(${currentPage - 1})">← 上一頁</button>
+    <span class="page-info">第 ${currentPage} / ${totalPages} 頁</span>
+    <button class="page-btn" ${currentPage >= totalPages ? 'disabled' : ''} onclick="goPage(${currentPage + 1})">下一頁 →</button>
+  `;
+}
+
+window.goPage = (p) => { 
+  currentPage = p; 
+  sessionStorage.setItem('tpg_page', p);
+  render(false); 
+  window.scrollTo({ top: document.querySelector('main').offsetTop, behavior: 'smooth' }); 
+};
+
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => render(false), 200);
+});
+
+// ── 卡片編輯彈窗（僅管理員；真正權限仍需 Firestore Rules 把關）──
+window.startAEdit = (type, id) => {
+  if (!isAdmin) { showToast('權限不足'); return; } // 前端防呆，非安全機制
+  const item = allData[type]?.find(i => i.id === id);
+  if (!item) return;
+  aEditId = id;
+  aEditType = type;
+
+  document.getElementById('am-city').innerHTML = cityOptions();
+  document.getElementById('am-name').value = item.name || '';
+  const addr = item.address || '';
+  const city = Object.keys(CITIES).find(c => addr.includes(c)) || '';
+  document.getElementById('am-city').value = city;
+  document.getElementById('am-district').innerHTML = districtOptions(city);
+  if (city) {
+    const district = CITIES[city]?.find(d => addr.includes(d)) || '';
+    document.getElementById('am-district').value = district;
+  }
+  document.getElementById('am-image').value = item.image || '';
+  document.getElementById('am-maps').value = item.mapsUrl || '';
+  aEditSelectedTags = new Set(item.tags || []);
+  renderAModalTagGrid();
+  document.getElementById('am-title').textContent = `編輯：${item.name}`;
+  document.getElementById('aedit-overlay').classList.add('show');
+};
+
+window.onAModalCityChange = () => {
+  const city = document.getElementById('am-city').value;
+  document.getElementById('am-district').innerHTML = districtOptions(city);
+};
+
+function renderAModalTagGrid() {
+  const grid = document.getElementById('am-tag-grid'); if (!grid) return;
+  grid.innerHTML = '';
+  (allTags[aEditType] || []).forEach(f => {
+    const el = document.createElement('span');
+    el.className = 'tag-check' + (aEditSelectedTags.has(f) ? ' active' : '');
+    el.textContent = f;
+    el.onclick = () => { aEditSelectedTags.has(f) ? aEditSelectedTags.delete(f) : aEditSelectedTags.add(f); el.classList.toggle('active'); };
+    grid.appendChild(el);
+  });
+}
+
+window.addNewTagAModal = async () => {
+  if (!isAdmin) { showToast('權限不足'); return; }
+  const input = document.getElementById('am-new-tag-input');
+  const name = input.value.trim();
+  if (!name) return;
+  if (!allTags[aEditType]) allTags[aEditType] = [];
+  if (allTags[aEditType].includes(name)) { showToast('標籤已存在'); return; }
+  const ref = doc(collection(db, TAG_COLS[aEditType]));
+  await setDoc(ref, { name });
+  allTags[aEditType].push(name);
+  allTags[aEditType].sort();
+  allTags.all = [...new Set([...allTags.restaurant, ...allTags.park, ...allTags.attraction])].sort();
+  aEditSelectedTags.add(name);
+  input.value = '';
+  renderAModalTagGrid();
+  showToast('標籤已新增 ✅');
+};
+
+window.closeAEditModal = () => {
+  aEditId = null; aEditType = null;
+  aEditSelectedTags.clear();
+  document.getElementById('aedit-overlay').classList.remove('show');
+};
+
+window.saveAEditModal = async () => {
+  if (!isAdmin) { showToast('權限不足'); return; }
+  if (!aEditId || !aEditType) return;
+  const name = document.getElementById('am-name').value.trim();
+  if (!name) { showToast('請填寫名稱'); return; }
+  const city = document.getElementById('am-city').value;
+  const district = document.getElementById('am-district').value;
+  const address = [city, district].filter(Boolean).join('') || '';
+
+  const btn = document.getElementById('am-submit-btn');
+  btn.disabled = true; btn.textContent = '儲存中...';
+
+  const data = {
+    name, address,
+    image: document.getElementById('am-image').value.trim(),
+    mapsUrl: document.getElementById('am-maps').value.trim(),
+    tags: [...aEditSelectedTags],
+    updatedAt: serverTimestamp(),
+  };
+
+  try {
+    await updateDoc(doc(db, COLS[aEditType], aEditId), data);
+    showToast('已儲存 ✅');
+    window.closeAEditModal();
+    await loadData();
+  } catch (e) {
+    showToast('儲存失敗：' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '儲存';
+  }
+};
+
+document.getElementById('aedit-overlay').addEventListener('click', e => {
+  if (e.target === e.currentTarget) window.closeAEditModal();
+});
+
+// ── Feedback ──
+window.openFeedback = () => document.getElementById('fb-modal').classList.remove('hidden');
+window.closeFeedback = () => {
+  document.getElementById('fb-modal').classList.add('hidden');
+  document.getElementById('fb-content').value = '';
+};
+
+const FB_COOLDOWN_MS = 10 * 60 * 1000; // 10 分鐘
+
+window.submitFeedback = async () => {
+  const content = document.getElementById('fb-content').value.trim();
+  const type = document.getElementById('fb-type').value;
+  if (!content) { showToast('請填寫內容'); return; }
+
+  // 冷卻時間檢查
+  const lastSent = parseInt(localStorage.getItem('fb_last_sent') || '0');
+  const remaining = FB_COOLDOWN_MS - (Date.now() - lastSent);
+  if (remaining > 0) {
+    const mins = Math.ceil(remaining / 60000);
+    showToast(`請 ${mins} 分鐘後再送出`); return;
+  }
+
+  const btn = document.getElementById('fb-submit');
+  btn.disabled = true;
+  await addDoc(collection(db, 'feedbacks'), {
+    type, content,
+    status: 'pending',
+    userName: currentUser ? currentUser.displayName : '訪客',
+    userEmail: currentUser ? currentUser.email : '',
+    createdAt: serverTimestamp()
+  });
+  localStorage.setItem('fb_last_sent', Date.now().toString());
+  btn.disabled = false;
+  closeFeedback();
+  showToast('感謝你的回饋！✅');
+};
+
+document.getElementById('fb-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeFeedback();
+});
+
+// ── Toast ──
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+loadData();
+</script>
+</body>
+</html>

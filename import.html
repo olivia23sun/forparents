@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>資料匯入工具</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    main { max-width:640px; margin:2rem auto; padding:0 1rem; display:flex; flex-direction:column; gap:1.25rem; }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:1.25rem; }
+    h2 { font-size:15px; font-weight:600; margin-bottom:.75rem; }
+    .drop-zone { border:2px dashed var(--border); border-radius:10px; padding:2rem; text-align:center; cursor:pointer; transition:border-color .15s; font-size:14px; color:var(--muted); }
+    .drop-zone:hover, .drop-zone.over { border-color:var(--accent); color:var(--accent); }
+    .drop-zone input { display:none; }
+    .preview { font-size:13px; }
+    table { width:100%; border-collapse:collapse; margin-top:.5rem; font-size:12px; }
+    th { background:var(--tag); padding:6px 8px; text-align:left; border:1px solid var(--border); }
+    td { padding:5px 8px; border:1px solid var(--border); color:var(--dark); max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .btn { width:100%; padding:10px; border-radius:10px; border:none; background:var(--accent); color:#FDF8F0; font-size:14px; font-weight:600; cursor:pointer; }
+    .btn:disabled { opacity:.5; cursor:not-allowed; }
+    .btn.secondary { background:var(--card); border:1px solid var(--border); color:var(--dark); margin-top: 0; }
+    .log { font-size:12px; color:var(--muted); line-height:1.8; max-height:200px; overflow-y:auto; }
+    .log .ok { color:#5a8a5a; }
+    .log .upd { color:#3a7ca5; }
+    .log .err { color:#c0392b; }
+    .hint { font-size:12px; color:var(--muted); line-height:1.7; }
+    code { background:var(--tag); padding:1px 5px; border-radius:4px; font-size:11px; }
+    .dup-group { border:1px solid var(--border); border-radius:8px; padding:.75rem; margin-top:.75rem; }
+    .dup-group h3 { font-size:13px; margin-bottom:.5rem; }
+    .dup-row { display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:12px; padding:6px 0; border-top:1px solid var(--border); }
+    .dup-row:first-of-type { border-top:none; }
+    .dup-url { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+    .dup-del { background:#c0392b; color:#fff; border:none; border-radius:6px; padding:4px 10px; font-size:11px; cursor:pointer; }
+    .tabs { display:flex; gap:6px; margin-bottom:1rem; }
+    .tab { flex:1; padding:8px; border-radius:8px; border:1px solid var(--border); background:var(--card); cursor:pointer; font-size:13px; }
+    .tab.active { background:var(--accent); color:#FDF8F0; border-color:var(--accent); }
+  </style>
+</head>
+<body>
+<header>
+  <h1>📥 批次匯入工具</h1>
+  <a class="back" href="admin.html">← 回後台</a>
+</header>
+
+<main>
+  <div class="card hint">
+    <h2>CSV 格式說明</h2>
+    Excel 存成 CSV（UTF-8），欄位標題如下：<br><br>
+    <code>name</code> <code>city</code> <code>district</code> <code>image</code> <code>mapsUrl</code> <code>tags</code><br><br>
+    · <strong>city</strong>：縣市名，例如 <code>台南市</code>、<code>高雄市</code><br>
+    · <strong>district</strong>：區名，例如 <code>東區</code>（可留空）<br>
+    · <strong>tags</strong>：多個標籤用逗號分隔，例如 <code>兒童座椅,環境安靜</code><br>
+    · image / mapsUrl 可留空<br>
+    · <strong>同名地點會自動更新既有資料，不會產生重複</strong>
+  </div>
+
+  <div class="card" id="main-card">
+    <div class="login-wall">
+      <div>請先登入</div>
+      <button class="g-btn" onclick="loginGoogle()">
+        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="16" /> Google 登入
+      </button>
+    </div>
+  </div>
+
+  <div class="card" id="dup-card" style="display:none">
+    <h2>🔍 檢查重複資料</h2>
+    <div class="hint">掃描目前分類中名稱重複的地點，可直接刪除多餘的一筆。</div>
+    <button class="btn secondary" id="scan-btn" onclick="scanDuplicates()">掃描重複</button>
+    <div id="dup-results"></div>
+  </div>
+</main>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, collection, addDoc, getDocs, query, where, updateDoc, deleteDoc, doc }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDgTkS5Dl5rVUFrBEOfzHI8TbTIBpD5Qpk",
+  authDomain: "tainan-parent-guide.firebaseapp.com",
+  projectId: "tainan-parent-guide",
+  storageBucket: "tainan-parent-guide.firebasestorage.app",
+  messagingSenderId: "275390459577",
+  appId: "1:275390459577:web:f9479978551f246a373568"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+let currentType = 'restaurant';
+let parsedRows = [];
+
+window.loginGoogle = async () => {
+  await signInWithPopup(auth, new GoogleAuthProvider());
+};
+
+onAuthStateChanged(auth, user => {
+  if (user) { buildUI(); document.getElementById('dup-card').style.display = ''; }
+  else {
+    document.getElementById('dup-card').style.display = 'none';
+    document.getElementById('main-card').innerHTML = `
+      <div class="login-wall">
+        <div>請先登入</div>
+        <button class="g-btn" onclick="loginGoogle()">
+          <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="16" /> Google 登入
+        </button>
+      </div>`;
+  }
+});
+
+function colName(type) {
+  return type === 'restaurant' ? 'restaurants' : type === 'park' ? 'parks' : 'attractions';
+}
+
+function buildUI() {
+  document.getElementById('main-card').innerHTML = `
+    <h2>選擇匯入類型</h2>
+    <div class="tabs">
+      <button class="tab active" id="tab-r" onclick="setType('restaurant')">🍽 親子餐廳</button>
+      <button class="tab" id="tab-p" onclick="setType('park')">🌳 公園</button>
+      <button class="tab" id="tab-a" onclick="setType('attraction')">🎡 親子景點</button>
+    </div>
+
+    <div class="drop-zone" id="drop-zone" onclick="document.getElementById('csv-input').click()">
+      <input type="file" id="csv-input" accept=".csv" />
+      📂 點擊選擇 CSV 檔案，或拖曳到此處
+    </div>
+
+    <div class="preview" id="preview" style="display:none">
+      <div id="preview-count"></div>
+      <div style="overflow-x:auto"><table id="preview-table"></table></div>
+    </div>
+
+    <button class="btn" id="import-btn" disabled onclick="doImport()">匯入到 Firestore（自動更新同名資料）</button>
+    <div class="log" id="log"></div>
+  `;
+
+  window.setType = (type) => {
+    currentType = type;
+    document.getElementById('tab-r').classList.toggle('active', type === 'restaurant');
+    document.getElementById('tab-p').classList.toggle('active', type === 'park');
+    document.getElementById('tab-a').classList.toggle('active', type === 'attraction');
+  };
+
+  const dropZone = document.getElementById('drop-zone');
+  const csvInput = document.getElementById('csv-input');
+
+  csvInput.addEventListener('change', e => {
+    handleFile(e.target.files[0]);
+    e.target.value = ''; // 清除輸入框的值，確保能重複選擇同一個檔案
+  });
+  
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+  dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('over'); handleFile(e.dataTransfer.files[0]); });
+}
+
+function handleFile(file) {
+  if (!file) return;
+  
+  // 每次選擇新檔案時，自動清空舊的 Log 紀錄，避免畫面過長
+  const logDiv = document.getElementById('log');
+  if (logDiv) logDiv.innerHTML = '';
+  
+  // 恢復匯入按鈕的文字狀態
+  const btn = document.getElementById('import-btn');
+  if (btn) btn.textContent = '匯入到 Firestore（自動更新同名資料）';
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    const text = e.target.result;
+    parsedRows = parseCSV(text);
+    showPreview(parsedRows);
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+function parseCSV(text) {
+  // 統一處理 CRLF/LF 換行，避免最後一欄殘留 \r
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim().split('\n').map(l => l.trim()).filter(Boolean);
+  const header = lines[0].toLowerCase().split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  const idx = k => header.indexOf(k);
+
+  return lines.slice(1).map(line => {
+    const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+    const get = k => cols[idx(k)] || '';
+    const city = get('city');
+    const district = get('district');
+    const address = [city, district].filter(Boolean).join('');
+    return {
+      name: get('name'),
+      address,
+      image: get('image') || '',
+      mapsUrl: get('mapsurl') || '',
+      tags: get('tags') ? get('tags').split('，').join(',').split(',').map(t => t.trim()).filter(Boolean) : []
+    };
+  }).filter(r => r.name);
+}
+
+function showPreview(rows) {
+  const preview = document.getElementById('preview');
+  const count = document.getElementById('preview-count');
+  const table = document.getElementById('preview-table');
+  if (!rows.length) { preview.style.display = 'none'; return; }
+
+  count.textContent = `共讀取到 ${rows.length} 筆資料（預覽前 5 筆）`;
+  const show = rows.slice(0, 5);
+  table.innerHTML = `
+    <tr><th>名稱</th><th>地址</th><th>標籤</th><th>圖片</th><th>地圖</th></tr>
+    ${show.map(r => `
+      <tr>
+        <td>${r.name}</td>
+        <td>${r.address}</td>
+        <td>${r.tags.join(', ') || '-'}</td>
+        <td>${r.image ? '✅' : '-'}</td>
+        <td>${r.mapsUrl ? '✅' : '-'}</td>
+      </tr>`).join('')}
+  `;
+  preview.style.display = '';
+  document.getElementById('import-btn').disabled = false;
+}
+
+// 依 name 找同一分類下既有的文件（可能有多筆）
+async function findExisting(colRef, name) {
+  const q = query(colRef, where('name', '==', name));
+  const snap = await getDocs(q);
+  return snap.docs; // array of QueryDocumentSnapshot
+}
+
+window.doImport = async () => {
+  if (!parsedRows.length) return;
+  const btn = document.getElementById('import-btn');
+  const log = document.getElementById('log');
+  btn.disabled = true;
+  btn.textContent = '匯入中...';
+  log.innerHTML = '';
+
+  const colRef = collection(db, colName(currentType));
+  let added = 0, updated = 0, fail = 0;
+
+  for (const row of parsedRows) {
+    try {
+      const existing = await findExisting(colRef, row.name);
+      if (existing.length > 0) {
+        // 已存在：更新第一筆，其餘視為重複但不動（可用下方掃描工具清除）
+        await updateDoc(doc(db, colName(currentType), existing[0].id), row);
+        updated++;
+        log.innerHTML += `<div class="upd">🔄 已更新：${row.name}</div>`;
+      } else {
+        await addDoc(colRef, row);
+        added++;
+        log.innerHTML += `<div class="ok">✅ 新增：${row.name}</div>`;
+      }
+    } catch (e) {
+      fail++;
+      log.innerHTML += `<div class="err">❌ ${row.name}：${e.message}</div>`;
+    }
+    log.scrollTop = log.scrollHeight;
+  }
+
+  btn.textContent = `完成！新增 ${added} 筆、更新 ${updated} 筆${fail ? `，失敗 ${fail} 筆` : ''}`;
+};
+
+// ---- 重複資料掃描（處理匯入工具上線前就已存在的舊重複） ----
+window.scanDuplicates = async () => {
+  const resultsDiv = document.getElementById('dup-results');
+  resultsDiv.innerHTML = '掃描中...';
+
+  let groupsHtml = '';
+  let foundAny = false;
+
+  for (const type of ['restaurant', 'park', 'attraction']) {
+    const cName = colName(type);
+    const snap = await getDocs(collection(db, cName));
+    const byName = {};
+    snap.forEach(d => {
+      const data = d.data();
+      const key = data.name || '(未命名)';
+      if (!byName[key]) byName[key] = [];
+      byName[key].push({ id: d.id, ...data });
+    });
+
+    for (const [name, docs] of Object.entries(byName)) {
+      if (docs.length <= 1) continue;
+      foundAny = true;
+      groupsHtml += `
+        <div class="dup-group">
+          <h3>${name}（${docs.length} 筆，分類：${cName}）</h3>
+          ${docs.map(d => `
+            <div class="dup-row">
+              <span class="dup-url" title="${d.mapsUrl || ''}">${d.mapsUrl || '（無地圖連結）'}</span>
+              <button class="dup-del" onclick="deleteDup('${cName}','${d.id}', this)">刪除</button>
+            </div>`).join('')}
+        </div>`;
+    }
+  }
+
+  resultsDiv.innerHTML = foundAny ? groupsHtml : '<div class="hint">目前沒有發現重複的名稱 🎉</div>';
+};
+
+window.deleteDup = async (cName, docId, btnEl) => {
+  if (!confirm('確定要刪除這一筆嗎？此動作無法復原。')) return;
+  try {
+    await deleteDoc(doc(db, cName, docId));
+    btnEl.closest('.dup-row').remove();
+  } catch (e) {
+    alert('刪除失敗：' + e.message);
+  }
+};
+</script>
+</body>
+</html>
