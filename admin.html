@@ -7,16 +7,12 @@
   <link rel="stylesheet" href="style.css" />
   <style>
     .modal-overlay {
-      display:none; position:fixed; inset:0; background:rgba(0,0,0,.45);
+      display:none; position:fixed; inset:0; background:rgba(61,48,39,.35);
       z-index:1000; align-items:flex-start; justify-content:center;
       overflow-y:auto; padding:5vh 1rem;
     }
     .modal-overlay.show { display:flex; }
-    .modal-card {
-      background:var(--card); border-radius:14px; padding:1.5rem;
-      width:100%; max-width:480px; box-shadow:0 10px 40px rgba(0,0,0,.25);
-    }
-    .modal-card h3 { font-size:15px; font-weight:600; margin-bottom:1rem; }
+    /* .modal-card 外觀定義在 style.css */
     .modal-close-row { display:flex; gap:8px; margin-top:1rem; }
     .modal-close-row .submit-btn, .modal-close-row .cancel-btn { flex:1; margin-top:0; }
   </style>
