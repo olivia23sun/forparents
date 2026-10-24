@@ -200,6 +200,8 @@ onAuthStateChanged(auth, async user => {
     area.innerHTML = `<div class="user-info">
       <img class="avatar" src="${user.photoURL}" />
       <span class="user-name">${user.displayName}</span>
+      ${isAdmin ? `<a class="auth-btn" href="admin.html">🛠 後台</a>
+      <a class="auth-btn" href="import.html">📥 匯入 CSV</a>` : ''}
       <button class="auth-btn logout" onclick="doLogout()">登出</button>
     </div>`;
     favTab.style.display = '';

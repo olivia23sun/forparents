@@ -109,7 +109,10 @@ window.loginGoogle = async () => {
 };
 getRedirectResult(auth).catch(e => { console.error('Google 登入失敗：', e); alert('登入失敗：' + (e.code || e.message)); });
 
+const ADMIN_UID = 'HAvOodPyFRQKo2Ip6ErhTkBe98G2';
+
 onAuthStateChanged(auth, user => {
+  if (user && user.uid !== ADMIN_UID) { window.location.replace('index.html'); return; }
   if (user) { buildUI(); document.getElementById('dup-card').style.display = ''; }
   else {
     document.getElementById('dup-card').style.display = 'none';
