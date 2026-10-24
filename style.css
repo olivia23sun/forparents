@@ -118,6 +118,7 @@ main { max-width:960px; margin:0 auto; padding:2rem 1rem 5rem; }
   font-size:13px; background:var(--card); color:var(--ink); outline:none; cursor:pointer;
 }
 .location-bar select:focus { box-shadow:var(--pop); }
+.location-bar select:disabled { opacity:.5; cursor:not-allowed; background:var(--bg); }
 
 /* ───────── 篩選標籤（貼紙） ───────── */
 .filter-label { font-size:13px; color:var(--muted); margin-bottom:8px; letter-spacing:.05em; }

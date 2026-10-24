@@ -41,7 +41,7 @@
 
   <div class="location-bar" id="location-bar">
     <select id="city-select"><option value="">所有縣市</option></select>
-    <select id="district-select" style="display:none"><option value="">所有區</option></select>
+    <select id="district-select" disabled title="請先選擇縣市"><option value="">請先選擇縣市</option></select>
   </div>
 
   <div class="filter-label" id="filter-label">篩選條件（可多選）</div>
@@ -134,7 +134,8 @@ let currentPage = parseInt(sessionStorage.getItem('tpg_page')) || 1;
 let isFirstRender = true;
 
 let activeFilters = { all:new Set(), restaurant:new Set(), park:new Set(), attraction:new Set() };
-let selectedCity = '', selectedDistrict = '';
+const DEFAULT_CITY = '臺南市';
+let selectedCity = DEFAULT_CITY, selectedDistrict = '';
 let allData = { restaurant:[], park:[], attraction:[] };
 let allTags = { all:[], restaurant:[], park:[], attraction:[] };
 let currentUser = null;
@@ -154,16 +155,26 @@ const citySelect = document.getElementById('city-select');
 const districtSelect = document.getElementById('district-select');
 Object.keys(CITIES).forEach(c => citySelect.innerHTML += `<option>${c}</option>`);
 
+function updateDistrictSelect() {
+  if (selectedCity && CITIES[selectedCity]) {
+    districtSelect.disabled = false;
+    districtSelect.title = '';
+    districtSelect.innerHTML = '<option value="">所有區</option>'
+      + CITIES[selectedCity].map(d => `<option>${d}</option>`).join('');
+  } else {
+    districtSelect.disabled = true;
+    districtSelect.title = '請先選擇縣市';
+    districtSelect.innerHTML = '<option value="">請先選擇縣市</option>';
+  }
+}
+
+citySelect.value = selectedCity;
+updateDistrictSelect();
+
 citySelect.addEventListener('change', () => {
   selectedCity = citySelect.value;
   selectedDistrict = '';
-  districtSelect.innerHTML = '<option value="">所有區</option>';
-  if (selectedCity && CITIES[selectedCity]) {
-    CITIES[selectedCity].forEach(d => districtSelect.innerHTML += `<option>${d}</option>`);
-    districtSelect.style.display = '';
-  } else {
-    districtSelect.style.display = 'none';
-  }
+  updateDistrictSelect();
   render();
 });
 districtSelect.addEventListener('change', () => { selectedDistrict = districtSelect.value; render(); });
@@ -297,10 +308,14 @@ function renderTags() {
 const TYPE_LABEL = { restaurant:'餐廳', park:'公園', attraction:'景點' };
 const TYPE_ICON = { restaurant:'🍽', park:'🌳', attraction:'🎡' };
 
+// 統一「台」→「臺」，避免舊資料寫法不同被預設篩選濾掉
+const normTai = s => (s || '').replace(/台/g, '臺');
+
 function filterItems(items) {
+  const city = normTai(selectedCity), district = normTai(selectedDistrict);
   return items
-    .filter(i => !selectedCity || (i.address||'').includes(selectedCity))
-    .filter(i => !selectedDistrict || (i.address||'').includes(selectedDistrict));
+    .filter(i => !city || normTai(i.address).includes(city))
+    .filter(i => !district || normTai(i.address).includes(district));
 }
 
 function applyTags(items, tab) {
