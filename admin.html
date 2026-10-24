@@ -70,7 +70,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged }
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc, setDoc, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -106,7 +106,18 @@ let fbFilter = 'all';
 let modalEditingId = null;
 let modalSelectedTags = new Set();
 
-window.loginGoogle = async () => { await signInWithPopup(auth, new GoogleAuthProvider()); };
+window.loginGoogle = async () => {
+  const provider = new GoogleAuthProvider();
+  try {
+    await signInWithPopup(auth, provider);
+  } catch (e) {
+    console.error('Google 登入失敗：', e);
+    if (e.code === 'auth/popup-blocked') { await signInWithRedirect(auth, provider); return; }
+    if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
+    alert('登入失敗：' + (e.code || e.message));
+  }
+};
+getRedirectResult(auth).catch(e => { console.error('Google 登入失敗：', e); alert('登入失敗：' + (e.code || e.message)); });
 
 const ADMIN_UID = 'HAvOodPyFRQKo2Ip6ErhTkBe98G2';
 
