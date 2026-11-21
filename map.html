@@ -190,8 +190,9 @@
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged }
+import { getAuth, getRedirectResult, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { ensureAnonymous, googleLogin, isRealUser } from './auth-shared.js';
 import { getFirestore, collection, getDocs, doc, updateDoc }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { CITIES } from './location-data.js';
@@ -232,22 +233,17 @@ let selectedDistrict = sessionStorage.getItem('tpg_map_district') || '';
 let keyword = '';
 
 // ───────── Auth ─────────
-window.loginGoogle = async () => {
-  const provider = new GoogleAuthProvider();
-  try { await signInWithPopup(auth, provider); }
-  catch (e) {
-    if (e.code === 'auth/popup-blocked') { await signInWithRedirect(auth, provider); return; }
-    if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
-    alert('登入失敗：' + (e.code || e.message));
-  }
-};
+window.loginGoogle = () => googleLogin(auth, db);
 getRedirectResult(auth).catch(e => console.error(e));
-window.doLogout = () => signOut(auth);
+window.doLogout = () => {
+  if (confirm('登出後這支裝置會變回訪客，收藏要重新登入才會出現。確定登出？')) signOut(auth);
+};
 
 onAuthStateChanged(auth, user => {
   const area = document.getElementById('auth-area');
-  isAdmin = !!user && user.uid === ADMIN_UID;
-  area.innerHTML = user
+  if (!user) ensureAnonymous(auth);
+  isAdmin = isRealUser(user) && user.uid === ADMIN_UID;
+  area.innerHTML = isRealUser(user)
     ? `<div class="user-info">
         <img class="avatar" src="${esc(user.photoURL)}" />
         <span class="user-name">${esc(user.displayName)}</span>

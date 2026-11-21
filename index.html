@@ -65,6 +65,17 @@
     .cm-form { border-top:1px solid var(--border); padding:.75rem 1.25rem 1rem; }
     .cm-form textarea { min-height:64px; resize:none; }
     .cm-form-row { display:flex; justify-content:space-between; align-items:center; margin-top:6px; }
+    .cm-nick { margin-bottom:6px; }
+    /* 收藏轉移 */
+    .tf-desc { font-size:13px; color:var(--muted); line-height:1.6; }
+    .tf-full { width:100%; flex:none; }
+    .tf-code-box { display:flex; gap:8px; align-items:center; margin-top:10px; }
+    .tf-code {
+      flex:1; text-align:center; font-size:22px; font-weight:700; letter-spacing:.12em;
+      padding:8px; border:2px dashed var(--ink); border-radius:12px; background:var(--yellow-soft);
+      font-family:ui-monospace, Menlo, Consolas, monospace; user-select:all;
+    }
+    .tf-input { text-transform:uppercase; letter-spacing:.08em; }
     .cm-count { font-size:11px; color:var(--muted); }
     .cm-submit {
       padding:7px 18px; border-radius:20px; border:none; background:var(--accent);
@@ -194,16 +205,37 @@
   </div>
 </div>
 
+<!-- 收藏轉移 -->
+<div class="modal-overlay hidden" id="tf-modal">
+  <div class="modal">
+    <h3>🔁 收藏轉移</h3>
+    <p class="tf-desc">換手機時，在舊手機產生轉移碼，到新手機輸入就能把收藏帶過去（7 天內有效）。</p>
+    <label>從這支裝置匯出</label>
+    <button class="btn-primary tf-full" id="tf-export-btn" onclick="exportFavorites()">產生轉移碼</button>
+    <div class="tf-code-box" id="tf-code-box" style="display:none">
+      <div class="tf-code" id="tf-code"></div>
+      <button class="btn-cancel" onclick="copyTransferCode()">📋 複製</button>
+    </div>
+    <label>匯入到這支裝置</label>
+    <input type="text" id="tf-input" class="tf-input" placeholder="輸入轉移碼，例：K7QMP-2XAB9" autocomplete="off" />
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeTransfer()">關閉</button>
+      <button class="btn-primary" id="tf-import-btn" onclick="importFavorites()">匯入</button>
+    </div>
+  </div>
+</div>
+
 <button class="feedback-fab" onclick="openFeedback()">💬 意見回饋</button>
 <div class="toast" id="toast"></div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged }
+import { getAuth, getRedirectResult, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, addDoc, updateDoc, serverTimestamp,
-         query, orderBy, limit }
+import { getFirestore, collection, getDocs, getDoc, doc, setDoc, deleteDoc, addDoc, updateDoc, serverTimestamp,
+         query, orderBy, limit, writeBatch, Timestamp }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { ensureAnonymous, googleLogin, isRealUser } from './auth-shared.js';
 import { CITIES } from './location-data.js';
 
 const firebaseConfig = {
@@ -246,6 +278,7 @@ let detailItem = null;
 let detailComments = [];
 const CM_MAX_LEN = 300;
 const CM_COOLDOWN_MS = 30 * 1000; // 同一裝置 30 秒內只能留一次
+const CM_NICK_MAX = 20;
 
 // 防 XSS：所有使用者輸入的內容輸出前都要跳脫
 const esc = s => String(s ?? '').replace(/[&<>"']/g,
@@ -289,43 +322,46 @@ function districtOptions(city) {
 }
 
 // ── Auth ──
-window.loginGoogle = async () => {
-  const provider = new GoogleAuthProvider();
-  try {
-    await signInWithPopup(auth, provider);
-  } catch (e) {
-    console.error('Google 登入失敗：', e);
-    if (e.code === 'auth/popup-blocked') { await signInWithRedirect(auth, provider); return; }
-    if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
-    alert('登入失敗：' + (e.code || e.message));
-  }
-};
+window.loginGoogle = () => googleLogin(auth, db);
 getRedirectResult(auth).catch(e => { console.error('Google 登入失敗：', e); alert('登入失敗：' + (e.code || e.message)); });
-window.doLogout = async () => { await signOut(auth); userFavorites.clear(); render(); };
+window.doLogout = async () => {
+  if (!confirm('登出後這支裝置會變回訪客，收藏要重新登入才會出現。確定登出？')) return;
+  await signOut(auth); userFavorites.clear(); render();
+};
 
 onAuthStateChanged(auth, async user => {
   currentUser = user;
   const area = document.getElementById('auth-area');
   const favTab = document.getElementById('fav-tab');
-  if (user) {
+  const googleBtn = `<button class="auth-btn" onclick="loginGoogle()" title="登入後收藏可跨裝置同步">
+      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="16" /> Google 登入
+    </button>`;
+  const transferBtn = `<button class="auth-btn" onclick="openTransfer()">🔁 收藏轉移</button>`;
+  if (isRealUser(user)) {
     isAdmin = (user.uid === ADMIN_UID);
     area.innerHTML = `<div class="user-info">
       <img class="avatar" src="${esc(user.photoURL)}" />
       <span class="user-name">${esc(user.displayName)}</span>
       ${isAdmin ? `<a class="auth-btn" href="admin.html">🛠 後台</a>
       <a class="auth-btn" href="import.html">📥 匯入 CSV</a>` : ''}
+      ${transferBtn}
       <button class="auth-btn logout" onclick="doLogout()">登出</button>
     </div>`;
     favTab.style.display = '';
     await loadFavorites();
+  } else if (user) {
+    // 匿名訪客：不用登入也能收藏、留言
+    isAdmin = false;
+    area.innerHTML = `<div class="user-info">${transferBtn}${googleBtn}</div>`;
+    favTab.style.display = '';
+    await loadFavorites();
   } else {
-    area.innerHTML = `<button class="auth-btn" onclick="loginGoogle()">
-      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="16" /> Google 登入
-    </button>`;
+    area.innerHTML = googleBtn;
     isAdmin = false;
     favTab.style.display = 'none';
     userFavorites.clear();
     if (currentTab === 'favorites') switchTab('all');
+    ensureAnonymous(auth);
   }
   render(false);
   // 彈窗開著時登入／登出，同步更新留言區
@@ -638,7 +674,11 @@ function renderCommentForm() {
       </button></div>`;
     return;
   }
-  form.innerHTML = `
+  const nickRow = currentUser.isAnonymous
+    ? `<input type="text" id="cm-nick" class="cm-nick" maxlength="${CM_NICK_MAX}" placeholder="暱稱（例：小安媽媽）"
+        value="${esc(localStorage.getItem('cm_nick') || '')}" />`
+    : '';
+  form.innerHTML = `${nickRow}
     <textarea id="cm-input" maxlength="${CM_MAX_LEN}" placeholder="分享你帶孩子去的心得…"></textarea>
     <div class="cm-form-row">
       <span class="cm-count" id="cm-count">0 / ${CM_MAX_LEN}</span>
@@ -661,12 +701,20 @@ window.submitComment = async () => {
   const remain = CM_COOLDOWN_MS - (Date.now() - last);
   if (remain > 0) { showToast(`請 ${Math.ceil(remain / 1000)} 秒後再留言`); return; }
 
+  let userName = currentUser.displayName || '使用者';
+  if (currentUser.isAnonymous) {
+    const nick = (document.getElementById('cm-nick')?.value || '').trim();
+    if (!nick) { showToast('請填寫暱稱'); return; }
+    localStorage.setItem('cm_nick', nick);
+    userName = nick.slice(0, CM_NICK_MAX) + '（訪客）';
+  }
+
   const btn = document.getElementById('cm-submit');
   btn.disabled = true; btn.textContent = '送出中...';
   try {
     await addDoc(collection(db, COLS[detailItem.type], detailItem.id, 'comments'), {
       uid: currentUser.uid,
-      userName: currentUser.displayName || '使用者',
+      userName,
       photoURL: currentUser.photoURL || '',
       text,
       createdAt: serverTimestamp(),
@@ -864,8 +912,8 @@ window.submitFeedback = async () => {
   await addDoc(collection(db, 'feedbacks'), {
     type, content,
     status: 'pending',
-    userName: currentUser ? currentUser.displayName : '訪客',
-    userEmail: currentUser ? currentUser.email : '',
+    userName: currentUser?.displayName || '訪客',
+    userEmail: currentUser?.email || '',
     createdAt: serverTimestamp()
   });
   localStorage.setItem('fb_last_sent', Date.now().toString());
@@ -877,6 +925,81 @@ window.submitFeedback = async () => {
 document.getElementById('fb-modal').addEventListener('click', e => {
   if (e.target === e.currentTarget) closeFeedback();
 });
+
+// ── 收藏轉移 ──
+const TF_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 去掉易混淆的 I O 0 1
+const TF_LEN = 10;
+const TF_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const fmtCode = c => c.slice(0, 5) + '-' + c.slice(5);
+
+window.openTransfer = () => {
+  document.getElementById('tf-code-box').style.display = 'none';
+  document.getElementById('tf-input').value = '';
+  document.getElementById('tf-modal').classList.remove('hidden');
+};
+window.closeTransfer = () => document.getElementById('tf-modal').classList.add('hidden');
+document.getElementById('tf-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeTransfer();
+});
+
+window.exportFavorites = async () => {
+  if (!currentUser) { showToast('目前無法使用，請稍後再試'); return; }
+  if (!userFavorites.size) { showToast('還沒有收藏可以匯出'); return; }
+  const btn = document.getElementById('tf-export-btn');
+  btn.disabled = true;
+  try {
+    const bytes = crypto.getRandomValues(new Uint8Array(TF_LEN));
+    const code = [...bytes].map(b => TF_ALPHABET[b % TF_ALPHABET.length]).join('');
+    await setDoc(doc(db, 'fav_transfers', code), {
+      ownerUid: currentUser.uid,
+      favorites: [...userFavorites].slice(0, 500),
+      createdAt: serverTimestamp(),
+      expiresAt: Timestamp.fromMillis(Date.now() + TF_TTL_MS),
+    });
+    document.getElementById('tf-code').textContent = fmtCode(code);
+    document.getElementById('tf-code-box').style.display = '';
+  } catch (e) {
+    showToast('產生失敗：' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+window.copyTransferCode = async () => {
+  const code = document.getElementById('tf-code').textContent;
+  try { await navigator.clipboard.writeText(code); showToast('已複製 ✅'); }
+  catch { showToast('請手動抄下轉移碼'); }
+};
+
+window.importFavorites = async () => {
+  if (!currentUser) { showToast('目前無法使用，請稍後再試'); return; }
+  const code = document.getElementById('tf-input').value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code.length !== TF_LEN) { showToast('轉移碼格式不對，請再確認一次'); return; }
+  const btn = document.getElementById('tf-import-btn');
+  btn.disabled = true; btn.textContent = '匯入中...';
+  try {
+    const snap = await getDoc(doc(db, 'fav_transfers', code));
+    if (!snap.exists() || snap.data().expiresAt.toMillis() < Date.now()) {
+      showToast('找不到這組轉移碼，或已過期'); return;
+    }
+    const ids = (snap.data().favorites || []).filter(id => typeof id === 'string' && !userFavorites.has(id));
+    if (ids.length) {
+      const batch = writeBatch(db);
+      ids.forEach(id => batch.set(doc(db, 'users', currentUser.uid, 'favorites', id), { savedAt: Date.now() }));
+      await batch.commit();
+      ids.forEach(id => userFavorites.add(id));
+    }
+    closeTransfer();
+    showToast(ids.length ? `已匯入 ${ids.length} 個收藏 ❤️` : '收藏都已經在這支裝置上了');
+    render(false);
+  } catch (e) {
+    // 過期的轉移碼會被 Rules 擋下，也會走到這裡
+    showToast('找不到這組轉移碼，或已過期');
+    console.warn(e);
+  } finally {
+    btn.disabled = false; btn.textContent = '匯入';
+  }
+};
 
 // ── Toast ──
 function showToast(msg) {

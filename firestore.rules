@@ -1,0 +1,70 @@
+rules_version = '2';
+
+// 親子好去處 Firestore 安全規則
+// 套用方式：Firebase 主控台 → Firestore → 規則 → 貼上發布
+//          或 firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isAdmin()  { return signedIn() && request.auth.uid == 'HAvOodPyFRQKo2Ip6ErhTkBe98G2'; }
+    function isPlaceCol(col) { return col in ['restaurants', 'parks', 'attractions']; }
+    function isTagCol(col)   { return col in ['tags_restaurant', 'tags_park', 'tags_attraction']; }
+    function str(v, minLen, maxLen) { return v is string && v.size() >= minLen && v.size() <= maxLen; }
+
+    // ── 地點、標籤：所有人可讀，只有管理員可寫 ──
+    match /{col}/{id} {
+      allow read:  if isPlaceCol(col) || isTagCol(col);
+      allow write: if isAdmin() && (isPlaceCol(col) || isTagCol(col));
+
+      // ── 留言：所有人可讀；登入（含匿名）可新增自己的；本人或管理員可刪 ──
+      match /comments/{cid} {
+        allow read: if isPlaceCol(col);
+        allow create: if isPlaceCol(col) && signedIn()
+          && request.resource.data.keys().hasOnly(['uid', 'userName', 'photoURL', 'text', 'createdAt'])
+          && request.resource.data.uid == request.auth.uid
+          && str(request.resource.data.text, 1, 300)
+          && str(request.resource.data.userName, 1, 40)
+          && str(request.resource.data.photoURL, 0, 500)
+          && request.resource.data.createdAt == request.time;
+        allow update: if false;
+        allow delete: if isPlaceCol(col) && signedIn()
+          && (resource.data.uid == request.auth.uid || isAdmin());
+      }
+    }
+
+    // ── 收藏：只有本人能讀寫 ──
+    match /users/{uid}/favorites/{fid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // ── 收藏轉移碼：知道碼才讀得到（不能列出），7 天內有效 ──
+    match /fav_transfers/{code} {
+      allow get: if signedIn() && resource.data.expiresAt > request.time;
+      allow list: if false;
+      allow create: if signedIn()
+        && code.size() == 10
+        && request.resource.data.keys().hasOnly(['ownerUid', 'favorites', 'createdAt', 'expiresAt'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.favorites is list
+        && request.resource.data.favorites.size() <= 500
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt <= request.time + duration.value(8, 'd');
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // ── 意見回饋：任何人可送出，只有管理員能看、改狀態、刪除 ──
+    match /feedbacks/{fid} {
+      allow create: if request.resource.data.keys().hasOnly(['type', 'content', 'status', 'userName', 'userEmail', 'createdAt'])
+        && request.resource.data.type in ['建議', '錯誤回報', '新增地點', '其他']
+        && str(request.resource.data.content, 1, 1000)
+        && request.resource.data.status == 'pending'
+        && str(request.resource.data.userName, 0, 60)
+        && str(request.resource.data.userEmail, 0, 120)
+        && request.resource.data.createdAt == request.time;
+      allow read, update, delete: if isAdmin();
+    }
+  }
+}
