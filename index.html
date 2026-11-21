@@ -112,6 +112,7 @@
     <button class="tab" data-tab="park">🌳 公園</button>
     <button class="tab" data-tab="attraction">🎡 親子景點</button>
     <button class="tab" data-tab="favorites" id="fav-tab" style="display:none">❤️ 我的收藏</button>
+    <a class="tab tab-link" href="map.html">📍 從地圖看</a>
   </div>
 
   <div class="location-bar" id="location-bar">
@@ -383,7 +384,7 @@ function switchTab(tab) {
   renderTags(); render(false);
 }
 window.switchTab = switchTab;
-document.querySelectorAll('.tab').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
+document.querySelectorAll('.tab[data-tab]').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
 
 // ── Tags ──
 function renderTags() {

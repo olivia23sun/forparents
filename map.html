@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>從地圖看｜親子好去處</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <style>
+    html, body { height:100%; }
+    body { display:flex; flex-direction:column; }
+    .map-tabs { display:flex; gap:10px; padding:1.4rem 1rem .8rem; justify-content:center; flex-wrap:wrap; }
+    a.tab { text-decoration:none; display:inline-block; }
+
+    .map-wrap {
+      position:relative; flex:1; min-height:420px;
+      margin:0 1rem 1rem; border:var(--stroke); border-radius:var(--radius);
+      box-shadow:var(--pop-lg); overflow:hidden;
+    }
+    #map { position:absolute; inset:0; }
+
+    /* ── 左側浮動面板 ── */
+    .map-panel {
+      position:absolute; top:12px; left:12px; bottom:12px; width:330px; z-index:5;
+      background:var(--card); border:var(--stroke); border-radius:var(--radius);
+      box-shadow:var(--pop); display:flex; flex-direction:column; overflow:hidden;
+    }
+    .mp-head { padding:12px 14px 8px; border-bottom:1.5px dashed var(--line-soft); }
+    .mp-title { font-size:17px; font-weight:700; }
+    .mp-title small { font-size:12px; color:var(--muted); font-weight:400; margin-left:6px; }
+    .mp-types { display:flex; gap:6px; margin:10px 0 8px; flex-wrap:wrap; }
+    .mp-type {
+      padding:4px 11px; border-radius:999px; border:1.5px solid var(--ink); background:var(--card);
+      font-family:var(--font); font-size:13px; cursor:pointer; color:var(--ink);
+    }
+    .mp-type.active { background:var(--accent); box-shadow:2px 2px 0 var(--ink); }
+    .mp-row { display:flex; gap:6px; margin-bottom:8px; }
+    .mp-row select, .mp-row input {
+      flex:1; min-width:0; padding:6px 10px; border:1.5px solid var(--ink); border-radius:999px;
+      font-family:var(--font); font-size:13px; background:var(--card); color:var(--ink); outline:none;
+    }
+    .mp-row select:disabled { opacity:.5; }
+    .mp-count { font-size:12px; color:var(--muted); }
+    .mp-status { font-size:12px; color:var(--green); margin-top:4px; min-height:1em; }
+    .mp-admin { margin-top:6px; }
+    .mp-admin button {
+      font-family:var(--font); font-size:12px; padding:4px 10px; border-radius:999px;
+      border:1.5px dashed var(--ink); background:var(--yellow-soft); cursor:pointer; color:var(--ink);
+    }
+    .mp-admin button:disabled { opacity:.5; cursor:not-allowed; }
+
+    .mp-list { flex:1; overflow-y:auto; }
+    .mp-item {
+      display:flex; gap:10px; align-items:center; padding:9px 14px; cursor:pointer;
+      border-bottom:1px solid var(--line-soft);
+    }
+    .mp-item:hover, .mp-item.active { background:var(--yellow-soft); }
+    .mp-thumb {
+      width:44px; height:44px; flex:none; border-radius:10px; border:1.5px solid var(--ink);
+      object-fit:cover; display:flex; align-items:center; justify-content:center; font-size:20px;
+    }
+    .mp-info { min-width:0; flex:1; }
+    .mp-name { font-size:14px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .mp-addr { font-size:12px; color:var(--muted); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .mp-empty { padding:2rem 1rem; text-align:center; color:var(--muted); font-size:14px; }
+
+    /* 類型色 */
+    .t-restaurant { background:var(--orange-soft); }
+    .t-park { background:var(--green-soft); }
+    .t-attraction { background:var(--blue-soft); }
+    .badge {
+      display:inline-block; font-size:11px; padding:0 6px; border-radius:6px; margin-left:4px;
+      border:1.2px solid var(--ink); vertical-align:middle; font-weight:400;
+    }
+    .badge.restaurant { background:var(--orange); }
+    .badge.park { background:var(--green); color:#fff; }
+    .badge.attraction { background:var(--blue); }
+
+    /* ── 地圖上的照片標記 ── */
+    .pin { cursor:pointer; position:relative; }
+    .pin-photo {
+      width:54px; height:54px; border-radius:12px; border:2px solid var(--ink); background:var(--card);
+      box-shadow:3px 3px 0 var(--ink); overflow:hidden; display:flex; align-items:center;
+      justify-content:center; font-size:26px; transition:transform .15s var(--bounce);
+    }
+    .pin-photo img { width:100%; height:100%; object-fit:cover; display:block; }
+    .pin.approx .pin-photo { border-style:dashed; }
+    .pin:hover .pin-photo, .pin.active .pin-photo { transform:translate(-1px,-3px) scale(1.08); }
+    .pin.active .pin-photo { outline:3px solid var(--accent); }
+    .pin-badge {
+      position:absolute; top:-8px; left:-8px; font-size:11px; padding:1px 5px; border-radius:6px;
+      border:1.5px solid var(--ink);
+    }
+    .pin-badge.restaurant { background:var(--orange); }
+    .pin-badge.park { background:var(--green); color:#fff; }
+    .pin-badge.attraction { background:var(--blue); }
+
+    /* ── 分群圓圈 ── */
+    .cluster {
+      border-radius:50%; background:var(--accent); border:2px solid var(--ink);
+      box-shadow:2px 2px 0 var(--ink); display:flex; align-items:center; justify-content:center;
+      font-family:var(--font); font-weight:700; color:var(--ink); cursor:pointer;
+      transition:transform .15s var(--bounce);
+    }
+    .cluster:hover { transform:scale(1.1); }
+
+    /* ── 彈出資訊 ── */
+    .maplibregl-popup-content {
+      font-family:var(--font); border:var(--stroke); border-radius:14px; box-shadow:var(--pop);
+      padding:12px 14px; background:var(--card); color:var(--ink); min-width:200px; max-width:260px;
+    }
+    .pp-img { width:100%; height:110px; object-fit:cover; border-radius:10px; border:1.5px solid var(--ink); margin-bottom:8px; }
+    .pp-name { font-size:15px; font-weight:700; }
+    .pp-addr { font-size:12px; color:var(--muted); margin:4px 0; }
+    .pp-note { font-size:11px; color:var(--red); margin-bottom:4px; }
+    .pp-tags { display:flex; flex-wrap:wrap; gap:4px; margin:6px 0; }
+    .pp-tags span { font-size:11px; padding:1px 7px; border-radius:6px; background:var(--yellow-soft); border:1px solid var(--ink); }
+    .pp-go {
+      display:inline-block; margin-top:4px; font-size:13px; padding:4px 12px; border-radius:999px;
+      border:1.5px solid var(--ink); background:var(--accent); color:var(--ink); text-decoration:none;
+    }
+
+    /* 底圖切換 */
+    .style-switch {
+      position:absolute; top:12px; right:52px; z-index:5; display:flex;
+      border:1.5px solid var(--ink); border-radius:8px; overflow:hidden; background:var(--card);
+    }
+    .style-switch button {
+      font-family:var(--font); font-size:12px; padding:4px 9px; border:none; background:none; cursor:pointer; color:var(--ink);
+    }
+    .style-switch button.active { background:var(--accent); }
+
+    /* 手機：地圖在上、清單在下 */
+    @media (max-width: 760px) {
+      body { height:auto; }
+      .map-wrap { flex:none; height:auto; overflow:visible; border:none; box-shadow:none; margin:0 .5rem 1rem; }
+      #map { position:relative; height:58vh; border:var(--stroke); border-radius:var(--radius); }
+      .map-panel { position:static; width:auto; margin-top:12px; max-height:none; }
+      .mp-list { max-height:60vh; }
+      .style-switch { top:12px; right:52px; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>🌿 親子好去處</h1>
+    <p>找適合帶孩子的餐廳、公園與景點</p>
+  </div>
+  <div id="auth-area"></div>
+</header>
+
+<nav class="map-tabs">
+  <a class="tab" href="index.html">📋 列表看</a>
+  <a class="tab active" href="map.html">📍 從地圖看</a>
+</nav>
+
+<div class="map-wrap">
+  <div id="map"></div>
+  <div class="style-switch" id="style-switch">
+    <button data-style="positron" class="active">淡</button>
+    <button data-style="liberty">彩</button>
+  </div>
+  <aside class="map-panel">
+    <div class="mp-head">
+      <div class="mp-title">從地圖看<small>親子好去處地圖</small></div>
+      <div class="mp-types" id="mp-types">
+        <button class="mp-type active" data-type="all">全部</button>
+        <button class="mp-type" data-type="restaurant">🍽 餐廳</button>
+        <button class="mp-type" data-type="park">🌳 公園</button>
+        <button class="mp-type" data-type="attraction">🎡 景點</button>
+      </div>
+      <div class="mp-row">
+        <select id="mp-city"></select>
+        <select id="mp-district"></select>
+      </div>
+      <div class="mp-row">
+        <input type="search" id="mp-q" placeholder="搜尋名稱或標籤…" />
+      </div>
+      <div class="mp-count" id="mp-count">載入中…</div>
+      <div class="mp-status" id="mp-status"></div>
+      <div class="mp-admin" id="mp-admin" style="display:none">
+        <button id="geo-btn" onclick="fillExactCoords()">🛠 補精確座標</button>
+      </div>
+    </div>
+    <div class="mp-list" id="mp-list"></div>
+  </aside>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, collection, getDocs, doc, updateDoc }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { CITIES } from './location-data.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDgTkS5Dl5rVUFrBEOfzHI8TbTIBpD5Qpk",
+  authDomain: "tainan-parent-guide.firebaseapp.com",
+  projectId: "tainan-parent-guide",
+  storageBucket: "tainan-parent-guide.firebasestorage.app",
+  messagingSenderId: "275390459577",
+  appId: "1:275390459577:web:f9479978551f246a373568",
+  measurementId: "G-QJKX09DMRM"
+};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+const ADMIN_UID = 'HAvOodPyFRQKo2Ip6ErhTkBe98G2';
+const COLS = { restaurant:'restaurants', park:'parks', attraction:'attractions' };
+const TYPE_LABEL = { restaurant:'餐廳', park:'公園', attraction:'景點' };
+const TYPE_SHORT = { restaurant:'餐', park:'園', attraction:'景' };
+const TYPE_ICON  = { restaurant:'🍽', park:'🌳', attraction:'🎡' };
+const DEFAULT_CITY = '臺南市';
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+const normTai = s => (s || '').replace(/台/g, '臺');
+// 只允許 http(s) 圖片網址
+const safeUrl = u => /^https?:\/\//i.test(u || '') ? u : '';
+
+let isAdmin = false;
+let allItems = [];           // 所有地點（含座標）
+let shownItems = [];         // 目前篩選後
+let activeId = null;
+let filterType = sessionStorage.getItem('tpg_map_type') || 'all';
+let selectedCity = sessionStorage.getItem('tpg_map_city') ?? DEFAULT_CITY;
+let selectedDistrict = sessionStorage.getItem('tpg_map_district') || '';
+let keyword = '';
+
+// ───────── Auth ─────────
+window.loginGoogle = async () => {
+  const provider = new GoogleAuthProvider();
+  try { await signInWithPopup(auth, provider); }
+  catch (e) {
+    if (e.code === 'auth/popup-blocked') { await signInWithRedirect(auth, provider); return; }
+    if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
+    alert('登入失敗：' + (e.code || e.message));
+  }
+};
+getRedirectResult(auth).catch(e => console.error(e));
+window.doLogout = () => signOut(auth);
+
+onAuthStateChanged(auth, user => {
+  const area = document.getElementById('auth-area');
+  isAdmin = !!user && user.uid === ADMIN_UID;
+  area.innerHTML = user
+    ? `<div class="user-info">
+        <img class="avatar" src="${esc(user.photoURL)}" />
+        <span class="user-name">${esc(user.displayName)}</span>
+        ${isAdmin ? `<a class="auth-btn" href="admin.html">🛠 後台</a>` : ''}
+        <button class="auth-btn logout" onclick="doLogout()">登出</button>
+      </div>`
+    : `<button class="auth-btn" onclick="loginGoogle()">
+        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="16" /> Google 登入
+      </button>`;
+  document.getElementById('mp-admin').style.display = isAdmin ? '' : 'none';
+});
+
+// ───────── 篩選 UI ─────────
+const citySel = document.getElementById('mp-city');
+const distSel = document.getElementById('mp-district');
+citySel.innerHTML = '<option value="">所有縣市</option>' + Object.keys(CITIES).map(c => `<option>${c}</option>`).join('');
+citySel.value = selectedCity;
+
+function updateDistrictSel() {
+  if (selectedCity && CITIES[selectedCity]) {
+    distSel.disabled = false;
+    distSel.innerHTML = '<option value="">所有區</option>' + CITIES[selectedCity].map(d => `<option>${d}</option>`).join('');
+    distSel.value = selectedDistrict;
+  } else {
+    distSel.disabled = true;
+    distSel.innerHTML = '<option value="">請先選擇縣市</option>';
+  }
+}
+updateDistrictSel();
+
+citySel.addEventListener('change', () => {
+  selectedCity = citySel.value; selectedDistrict = '';
+  sessionStorage.setItem('tpg_map_city', selectedCity);
+  sessionStorage.setItem('tpg_map_district', '');
+  updateDistrictSel(); refresh(true);
+});
+distSel.addEventListener('change', () => {
+  selectedDistrict = distSel.value;
+  sessionStorage.setItem('tpg_map_district', selectedDistrict);
+  refresh(true);
+});
+document.getElementById('mp-q').addEventListener('input', e => { keyword = e.target.value.trim(); refresh(false); });
+document.querySelectorAll('.mp-type').forEach(b => {
+  b.classList.toggle('active', b.dataset.type === filterType);
+  b.addEventListener('click', () => {
+    filterType = b.dataset.type;
+    sessionStorage.setItem('tpg_map_type', filterType);
+    document.querySelectorAll('.mp-type').forEach(x => x.classList.toggle('active', x === b));
+    refresh(false);
+  });
+});
+
+function applyFilters() {
+  const city = normTai(selectedCity), dist = normTai(selectedDistrict);
+  const kw = keyword.toLowerCase();
+  return allItems.filter(i =>
+    (filterType === 'all' || i.type === filterType) &&
+    (!city || normTai(i.address).includes(city)) &&
+    (!dist || normTai(i.address).includes(dist)) &&
+    (!kw || (i.name || '').toLowerCase().includes(kw) || (i.tags || []).some(t => t.toLowerCase().includes(kw)))
+  );
+}
+
+// ───────── 座標 ─────────
+// 1. 有精確座標（lat/lng 且 geoAddress 與目前地址相符）→ 直接用
+// 2. 否則用「縣市+行政區」中心點，並在附近以螺旋排開，標記為概略位置
+const GEO_CACHE_KEY = 'tpg_district_geo_v1';
+let districtGeo = {};
+try { districtGeo = JSON.parse(localStorage.getItem(GEO_CACHE_KEY) || '{}'); } catch {}
+const saveGeoCache = () => { try { localStorage.setItem(GEO_CACHE_KEY, JSON.stringify(districtGeo)); } catch {} };
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let lastNominatim = 0;
+// Nominatim 使用規範：每秒最多 1 次
+async function nominatim(q) {
+  const wait = lastNominatim + 1100 - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastNominatim = Date.now();
+  const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=tw&accept-language=zh-TW&q='
+    + encodeURIComponent(q);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('geocode ' + res.status);
+  const data = await res.json();
+  return data[0] || null;
+}
+
+function hasExact(i) {
+  return typeof i.lat === 'number' && typeof i.lng === 'number'
+    && normTai(i.geoAddress) === normTai(i.address);
+}
+
+function assignCoords() {
+  const groups = {};
+  for (const i of allItems) {
+    if (hasExact(i)) { i.coord = [i.lng, i.lat]; i.approx = false; continue; }
+    const key = normTai(i.address);
+    const c = districtGeo[key];
+    if (!c) { i.coord = null; continue; }
+    (groups[key] ||= []).push(i);
+  }
+  // 同一區的概略點以黃金角螺旋排開，放大時才不會疊在一起
+  for (const [key, items] of Object.entries(groups)) {
+    const [lng, lat] = districtGeo[key];
+    items.sort((a, b) => a.id.localeCompare(b.id));
+    items.forEach((it, n) => {
+      const r = 0.0025 * Math.sqrt(n);
+      const a = n * 2.39996;
+      it.coord = [lng + r * Math.cos(a) / Math.cos(lat * Math.PI / 180), lat + r * Math.sin(a)];
+      it.approx = true;
+    });
+  }
+}
+
+let geocoding = false;
+async function geocodeDistricts() {
+  if (geocoding) return;
+  const missing = [...new Set(allItems.filter(i => !hasExact(i) && i.address).map(i => normTai(i.address)))]
+    .filter(k => !districtGeo[k]);
+  if (!missing.length) return;
+  geocoding = true;
+  const status = document.getElementById('mp-status');
+  let done = 0;
+  for (const key of missing) {
+    status.textContent = `定位行政區中…（${done}/${missing.length}）`;
+    try {
+      const r = await nominatim(key);
+      if (r) { districtGeo[key] = [parseFloat(r.lon), parseFloat(r.lat)]; saveGeoCache(); }
+      else districtGeo[key] = null;
+    } catch (e) { console.warn(e); }
+    done++;
+    assignCoords(); refresh(false);
+  }
+  status.textContent = '';
+  geocoding = false;
+}
+
+// 管理員：逐筆用名稱查精確座標並寫回 Firestore
+window.fillExactCoords = async () => {
+  if (!isAdmin) return;
+  const todo = allItems.filter(i => !hasExact(i) && i.name);
+  if (!todo.length) { alert('所有地點都已有精確座標 ✅'); return; }
+  if (!confirm(`有 ${todo.length} 筆沒有精確座標，約需 ${Math.ceil(todo.length * 1.2 / 60)} 分鐘，要開始嗎？\n（查不到或結果不在同一區的會保留概略位置）`)) return;
+  const btn = document.getElementById('geo-btn');
+  const status = document.getElementById('mp-status');
+  btn.disabled = true;
+  let ok = 0, miss = 0;
+  for (const [n, i] of todo.entries()) {
+    status.textContent = `補座標中 ${n + 1}/${todo.length}（成功 ${ok}、略過 ${miss}）`;
+    try {
+      const r = await nominatim(`${i.name} ${i.address}`) || await nominatim(i.name);
+      const dist = (normTai(i.address).match(/(?:市|縣)(.+[區鄉鎮市])$/) || [])[1];
+      // 防止同名地點跑到別區：結果地址必須包含同一個行政區
+      if (r && (!dist || normTai(r.display_name).includes(dist))) {
+        const lat = parseFloat(r.lat), lng = parseFloat(r.lon);
+        await updateDoc(doc(db, COLS[i.type], i.id), { lat, lng, geoAddress: i.address });
+        Object.assign(i, { lat, lng, geoAddress: i.address });
+        ok++;
+        assignCoords(); refresh(false);
+      } else miss++;
+    } catch (e) { console.warn(i.name, e); miss++; }
+  }
+  status.textContent = `完成：成功 ${ok} 筆，略過 ${miss} 筆`;
+  btn.disabled = false;
+};
+
+// ───────── 地圖 ─────────
+const STYLES = {
+  positron: 'https://tiles.openfreemap.org/styles/positron',
+  liberty:  'https://tiles.openfreemap.org/styles/liberty',
+};
+const map = new maplibregl.Map({
+  container: 'map',
+  style: STYLES.positron,
+  center: [120.25, 23.05],
+  zoom: 9.5,
+  attributionControl: { compact: false },
+});
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true } }), 'top-right');
+
+function addDataLayers() {
+  if (map.getSource('places')) return;
+  map.addSource('places', {
+    type: 'geojson', data: toGeoJSON(), cluster: true, clusterRadius: 60, clusterMaxZoom: 15,
+  });
+  // 看不見的圖層：讓來源載入，才能用 querySourceFeatures 畫 HTML 標記
+  map.addLayer({ id: 'places-hidden', type: 'circle', source: 'places', paint: { 'circle-radius': 0, 'circle-opacity': 0 } });
+}
+map.on('load', () => { addDataLayers(); loadData(); });
+map.on('style.load', () => { if (allItems.length) { addDataLayers(); updateMarkers(); } });
+
+document.querySelectorAll('#style-switch button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#style-switch button').forEach(x => x.classList.toggle('active', x === b));
+  map.setStyle(STYLES[b.dataset.style]);
+}));
+
+function toGeoJSON() {
+  return {
+    type: 'FeatureCollection',
+    features: shownItems.filter(i => i.coord).map(i => ({
+      type: 'Feature', geometry: { type: 'Point', coordinates: i.coord }, properties: { id: i.id },
+    })),
+  };
+}
+
+const markers = new Map();   // key → maplibregl.Marker
+const byId = id => allItems.find(i => i.id === id);
+
+function pinEl(item) {
+  const el = document.createElement('div');
+  el.className = 'pin' + (item.approx ? ' approx' : '') + (item.id === activeId ? ' active' : '');
+  const img = safeUrl(item.image);
+  el.innerHTML = `<span class="pin-badge ${item.type}">${TYPE_SHORT[item.type] || ''}</span>
+    <div class="pin-photo t-${item.type}">${img
+      ? `<img src="${esc(img)}" alt="" loading="lazy" onerror="this.replaceWith(document.createTextNode('${TYPE_ICON[item.type] || '📍'}'))">`
+      : (TYPE_ICON[item.type] || '📍')}</div>`;
+  el.addEventListener('click', e => { e.stopPropagation(); selectItem(item.id, false); });
+  return el;
+}
+
+function clusterEl(id, count, coords) {
+  const el = document.createElement('div');
+  const size = count < 10 ? 34 : count < 50 ? 42 : count < 200 ? 50 : 58;
+  el.className = 'cluster';
+  el.style.cssText = `width:${size}px;height:${size}px;font-size:${size > 42 ? 15 : 13}px`;
+  el.textContent = count;
+  el.addEventListener('click', async () => {
+    const zoom = await map.getSource('places').getClusterExpansionZoom(id);
+    map.easeTo({ center: coords, zoom: Math.min(zoom, 17) });
+  });
+  return el;
+}
+
+function updateMarkers() {
+  if (!map.getSource('places') || !map.isSourceLoaded('places')) return;
+  const seen = new Set();
+  for (const f of map.querySourceFeatures('places')) {
+    const p = f.properties;
+    const coords = f.geometry.coordinates;
+    const key = p.cluster ? 'c' + p.cluster_id + '_' + p.point_count : 'p' + p.id + (p.id === activeId ? '_a' : '');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (!markers.has(key)) {
+      let el;
+      if (p.cluster) el = clusterEl(p.cluster_id, p.point_count, coords);
+      else { const it = byId(p.id); if (!it) continue; el = pinEl(it); }
+      markers.set(key, new maplibregl.Marker({ element: el, anchor: p.cluster ? 'center' : 'bottom' }).setLngLat(coords).addTo(map));
+    }
+  }
+  for (const [key, m] of markers) if (!seen.has(key)) { m.remove(); markers.delete(key); }
+}
+map.on('move', updateMarkers);
+map.on('moveend', updateMarkers);
+map.on('sourcedata', e => { if (e.sourceId === 'places' && e.isSourceLoaded) updateMarkers(); });
+
+// ───────── 清單 + 選取 ─────────
+let popup = null;
+function selectItem(id, fly = true) {
+  const item = byId(id);
+  if (!item) return;
+  activeId = id;
+  document.querySelectorAll('.mp-item').forEach(el => el.classList.toggle('active', el.dataset.id === id));
+  document.querySelector(`.mp-item[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  // 重畫標記讓選取的那顆高亮
+  for (const m of markers.values()) m.remove();
+  markers.clear();
+  updateMarkers();
+  if (!item.coord) { showToastStatus('這筆還沒有位置資料'); return; }
+  if (fly) map.flyTo({ center: item.coord, zoom: Math.max(map.getZoom(), 15.5) });
+  popup?.remove();
+  const img = safeUrl(item.image);
+  popup = new maplibregl.Popup({ offset: [0, -58], maxWidth: '280px' })
+    .setLngLat(item.coord)
+    .setHTML(`
+      ${img ? `<img class="pp-img" src="${esc(img)}" alt="" onerror="this.remove()">` : ''}
+      <div class="pp-name">${esc(item.name)}<span class="badge ${item.type}">${TYPE_LABEL[item.type] || ''}</span></div>
+      <div class="pp-addr">📍 ${esc(item.address) || '（未填地址）'}</div>
+      ${item.approx ? '<div class="pp-note">※ 位置為行政區概略位置</div>' : ''}
+      ${(item.tags || []).length ? `<div class="pp-tags">${item.tags.map(t => `<span>${esc(t)}</span>`).join('')}</div>` : ''}
+      ${item.mapsUrl ? `<a class="pp-go" href="${esc(item.mapsUrl)}" target="_blank" rel="noopener">🗺 我要去這邊玩！</a>` : ''}`)
+    .addTo(map);
+  popup.on('close', () => {
+    if (activeId !== id) return;
+    activeId = null;
+    document.querySelectorAll('.mp-item.active').forEach(el => el.classList.remove('active'));
+    for (const m of markers.values()) m.remove();
+    markers.clear(); updateMarkers();
+  });
+}
+window.selectItem = selectItem;
+
+function showToastStatus(msg) {
+  const s = document.getElementById('mp-status');
+  s.textContent = msg;
+  setTimeout(() => { if (s.textContent === msg) s.textContent = ''; }, 2500);
+}
+
+function renderList() {
+  const list = document.getElementById('mp-list');
+  const located = shownItems.filter(i => i.coord).length;
+  const approx = shownItems.filter(i => i.approx).length;
+  document.getElementById('mp-count').textContent =
+    `顯示 ${shownItems.length} 筆（地圖上 ${located} 筆${approx ? `，其中 ${approx} 筆為概略位置` : ''}）`;
+  if (!shownItems.length) { list.innerHTML = '<div class="mp-empty">🔍 沒有符合條件的地點</div>'; return; }
+  list.innerHTML = shownItems.map(i => {
+    const img = safeUrl(i.image);
+    return `<div class="mp-item${i.id === activeId ? ' active' : ''}" data-id="${esc(i.id)}" onclick="selectItem(this.dataset.id)">
+      ${img ? `<img class="mp-thumb" src="${esc(img)}" alt="" loading="lazy" onerror="this.outerHTML='<div class=&quot;mp-thumb t-${i.type}&quot;>${TYPE_ICON[i.type] || '📍'}</div>'">`
+            : `<div class="mp-thumb t-${i.type}">${TYPE_ICON[i.type] || '📍'}</div>`}
+      <div class="mp-info">
+        <div class="mp-name">${esc(i.name)}<span class="badge ${i.type}">${TYPE_LABEL[i.type] || ''}</span></div>
+        <div class="mp-addr">${esc(i.address)}${(i.tags || []).length ? '・' + esc(i.tags.slice(0, 3).join('、')) : ''}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function fitToShown() {
+  const pts = shownItems.filter(i => i.coord).map(i => i.coord);
+  if (!pts.length) return;
+  const b = pts.reduce((bb, c) => bb.extend(c), new maplibregl.LngLatBounds(pts[0], pts[0]));
+  const wide = window.innerWidth > 760;
+  map.fitBounds(b, { padding: { top: 60, bottom: 60, left: wide ? 380 : 40, right: 60 }, maxZoom: 15, duration: 600 });
+}
+
+let fittedOnce = false;
+function refresh(fit) {
+  shownItems = applyFilters();
+  renderList();
+  map.getSource('places')?.setData(toGeoJSON());
+  if (fit || (!fittedOnce && shownItems.some(i => i.coord))) { fittedOnce = true; fitToShown(); }
+}
+
+// ───────── Data ─────────
+async function loadData() {
+  const snaps = await Promise.all(Object.entries(COLS).map(([type, col]) =>
+    getDocs(collection(db, col)).then(s => s.docs.map(d => ({ id: d.id, type, ...d.data() })))));
+  allItems = snaps.flat().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh-Hant'));
+  assignCoords();
+  refresh(false);
+  geocodeDistricts();
+}
+</script>
+</body>
+</html>
